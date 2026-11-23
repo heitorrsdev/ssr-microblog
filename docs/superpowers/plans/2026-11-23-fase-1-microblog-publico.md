@@ -68,6 +68,7 @@ src/app/app.{ts,html,config.ts,routes.ts,routes.server.ts}
 ### Tarefa 1: Criar o projeto Angular 22 com SSR
 
 **Arquivos:**
+
 - Criar (via CLI): toda a estrutura do projeto na raiz do repositório
 - Modificar: `src/app/app.html`, `src/app/app.spec.ts`
 
@@ -163,6 +164,7 @@ git commit -m "chore: cria projeto Angular 22 com SSR"
 ### Tarefa 2: Node, TypeScript estrito, ESLint e Prettier
 
 **Arquivos:**
+
 - Criar: `.node-version`, `.prettierignore` (e `.prettierrc` se não existir)
 - Modificar: `package.json`, `tsconfig.json`, `.gitignore`
 
@@ -263,6 +265,7 @@ git commit -m "chore: configura Node 24, TypeScript estrito, ESLint e Prettier"
 ### Tarefa 3: Infraestrutura do servidor (dependências e testes de servidor)
 
 **Arquivos:**
+
 - Criar: `vitest.server.config.ts`, `drizzle.config.ts`, `.env.example`
 - Modificar: `package.json`, `pnpm-workspace.yaml`, `angular.json`, `tsconfig.spec.json`, `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md`
 
@@ -278,7 +281,7 @@ pnpm add -D drizzle-kit @types/better-sqlite3 supertest @types/supertest tsx
 Em `pnpm-workspace.yaml`, dentro de `allowBuilds`, acrescente a linha (mantenha as existentes):
 
 ```yaml
-  better-sqlite3: true
+better-sqlite3: true
 ```
 
 - [ ] **Passo 3: Externalizar o módulo nativo e isolar os testes**
@@ -405,6 +408,7 @@ Pare. Peça autorização ao usuário para `git push -u origin chore/scaffold` e
 ### Tarefa 4: Configuração por ambiente
 
 **Arquivos:**
+
 - Criar: `src/server/config.ts`, `src/server/config.spec.ts`
 
 - [ ] **Passo 1: Branch**
@@ -470,9 +474,7 @@ const schema = z.object({
     .url()
     .default('http://localhost:4000')
     .transform((value) => value.replace(/\/$/, '')),
-  LOG_LEVEL: z
-    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
-    .default('info'),
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 });
 
 export type Config = z.infer<typeof schema>;
@@ -497,6 +499,7 @@ git commit -m "feat: adiciona configuração do servidor validada com Zod"
 ### Tarefa 5: Logger e tipos compartilhados
 
 **Arquivos:**
+
 - Criar: `src/server/logger.ts`, `src/shared/dto.ts`, `src/server/errors.ts`, `src/server/pagination.ts`, `src/server/pagination.spec.ts`
 
 - [ ] **Passo 1: Tipos compartilhados**
@@ -643,6 +646,7 @@ git commit -m "feat: adiciona DTOs compartilhados, logger, erros e paginação"
 ### Tarefa 6: Schema, migrations e conexão com o banco
 
 **Arquivos:**
+
 - Criar: `src/server/db/schema.ts`, `src/server/db/database.ts`, `src/server/db/database.spec.ts`, `src/server/testing/test-db.ts`, `src/server/testing/fixtures.ts`, `drizzle/` (gerado)
 
 - [ ] **Passo 1: Teste falhando**
@@ -823,6 +827,7 @@ Pare. Peça autorização para push e PR da branch `feat/config-db`.
 Os repositórios só executam consultas e são exercitados pelos testes de serviço e de API (banco real em memória, sem mocks). Por isso não têm spec próprio.
 
 **Arquivos:**
+
 - Criar: `src/server/db/posts.repository.ts`, `src/server/db/users.repository.ts`
 
 - [ ] **Passo 1: Branch**
@@ -876,7 +881,9 @@ export function createPostsRepository(db: Db) {
     },
 
     count(filter: PostsFilter = {}): number {
-      return db.select({ total: count() }).from(posts).where(byUser(filter.userId)).get()?.total ?? 0;
+      return (
+        db.select({ total: count() }).from(posts).where(byUser(filter.userId)).get()?.total ?? 0
+      );
     },
 
     findById(id: number): PostRow | undefined {
@@ -951,6 +958,7 @@ git commit -m "feat: adiciona repositórios de posts e usuários"
 ### Tarefa 8: Serviços (TDD)
 
 **Arquivos:**
+
 - Criar: `src/server/services/mappers.ts`, `src/server/services/posts.service.ts`, `src/server/services/posts.service.spec.ts`, `src/server/services/users.service.ts`, `src/server/services/users.service.spec.ts`
 
 - [ ] **Passo 1: Testes falhando do serviço de posts**
@@ -1199,6 +1207,7 @@ Esperado: todos os testes passam.
 ### Tarefa 9: API HTTP (TDD)
 
 **Arquivos:**
+
 - Criar: `src/server/api/schemas.ts`, `src/server/api/error-handler.ts`, `src/server/api/router.ts`, `src/server/api/router.spec.ts`
 
 - [ ] **Passo 1: Testes falhando**
@@ -1290,7 +1299,9 @@ describe('API', () => {
       const res = await request(app).get('/api/posts/999');
 
       expect(res.status).toBe(404);
-      expect(res.body).toEqual({ error: { code: 'post_not_found', message: 'Post não encontrado' } });
+      expect(res.body).toEqual({
+        error: { code: 'post_not_found', message: 'Post não encontrado' },
+      });
     });
 
     it('devolve 400 para id não numérico', async () => {
@@ -1467,6 +1478,7 @@ Pare. Peça autorização para push e PR da branch `feat/api`.
 ### Tarefa 10: Sitemap e robots (TDD)
 
 **Arquivos:**
+
 - Criar: `src/server/seo/seo.router.ts`, `src/server/seo/seo.router.spec.ts`
 
 - [ ] **Passo 1: Branch**
@@ -1592,6 +1604,7 @@ git commit -m "feat: adiciona sitemap.xml e robots.txt gerados no servidor"
 ### Tarefa 11: Seed de dados (TDD)
 
 **Arquivos:**
+
 - Criar: `src/server/db/seed.ts`, `src/server/db/seed.spec.ts`, `src/server/db/seed.run.ts`
 
 - [ ] **Passo 1: Testes falhando**
@@ -1633,7 +1646,11 @@ describe('seed', () => {
 
   it('gera posts com até 280 caracteres e textos distintos', () => {
     seed(handle.db);
-    const bodies = handle.db.select({ body: posts.body }).from(posts).all().map((r) => r.body);
+    const bodies = handle.db
+      .select({ body: posts.body })
+      .from(posts)
+      .all()
+      .map((r) => r.body);
 
     expect(bodies.every((body) => body.length <= 280)).toBe(true);
     expect(new Set(bodies).size).toBe(SEED_POST_COUNT);
@@ -1656,9 +1673,17 @@ import { posts, users } from './schema';
 export const SEED_POST_COUNT = 48;
 
 const SEED_USERS = [
-  { handle: 'maria', displayName: 'Maria Souza', bio: 'Desenvolvedora front-end. Café e acessibilidade.' },
+  {
+    handle: 'maria',
+    displayName: 'Maria Souza',
+    bio: 'Desenvolvedora front-end. Café e acessibilidade.',
+  },
   { handle: 'joao', displayName: 'João Lima', bio: 'Back-end, bancos de dados e boas migrations.' },
-  { handle: 'ana', displayName: 'Ana Costa', bio: 'Engenharia de software e testes automatizados.' },
+  {
+    handle: 'ana',
+    displayName: 'Ana Costa',
+    bio: 'Engenharia de software e testes automatizados.',
+  },
   { handle: 'pedro', displayName: 'Pedro Alves', bio: 'DevOps curioso. Containers e pipelines.' },
   { handle: 'lucia', displayName: 'Lúcia Rocha', bio: 'Design de produto e UX writing.' },
   { handle: 'caio', displayName: 'Caio Mendes', bio: 'Estudando SSR, um commit de cada vez.' },
@@ -1746,6 +1771,7 @@ git commit -m "feat: adiciona seed idempotente de usuários e posts"
 ### Tarefa 12: Montagem do Express e do entrypoint (TDD)
 
 **Arquivos:**
+
 - Criar: `src/server/app.ts`, `src/server/app.spec.ts`, `src/server/render-error-handler.ts`, `src/server/render-error-handler.spec.ts`
 - Modificar: `src/server.ts`, `angular.json`
 
@@ -1994,6 +2020,7 @@ Pare. Peça autorização para push e PR da branch `feat/server-wiring`.
 ### Tarefa 13: Serviços do núcleo Angular (TDD)
 
 **Arquivos:**
+
 - Criar: `src/app/core/site-url.ts`, `src/app/core/seo.service.ts`, `src/app/core/seo.service.spec.ts`, `src/app/core/api.service.ts`, `src/app/core/api.service.spec.ts`, `src/app/core/page-param.ts`, `src/app/core/page-param.spec.ts`, `src/app/core/text.ts`, `src/app/core/text.spec.ts`, `src/app/core/not-found.ts`, `src/app/core/not-found.spec.ts`
 - Modificar: `src/app/app.config.ts`
 
@@ -2191,9 +2218,9 @@ describe('orNotFound', () => {
   it('propaga erros que não são 404/400', async () => {
     TestBed.configureTestingModule({ providers: [{ provide: RESPONSE_INIT, useValue: {} }] });
 
-    await expect(run(throwError(() => new HttpErrorResponse({ status: 500 })))).rejects.toBeInstanceOf(
-      HttpErrorResponse,
-    );
+    await expect(
+      run(throwError(() => new HttpErrorResponse({ status: 500 }))),
+    ).rejects.toBeInstanceOf(HttpErrorResponse);
   });
 });
 ```
@@ -2402,6 +2429,7 @@ git commit -m "feat: adiciona serviços de SEO, API e utilitários do núcleo An
 ### Tarefa 14: Componentes reutilizáveis (TDD)
 
 **Arquivos:**
+
 - Criar: `src/app/shared-ui/post-card.ts`, `src/app/shared-ui/post-card.spec.ts`, `src/app/shared-ui/pagination.ts`, `src/app/shared-ui/pagination.spec.ts`
 
 - [ ] **Passo 1: Testes falhando**
@@ -2569,6 +2597,7 @@ git commit -m "feat: adiciona componentes PostCard e Pagination"
 ### Tarefa 15: Layout, páginas estáticas e modos de renderização
 
 **Arquivos:**
+
 - Criar: `src/app/features/home/home.page.ts`, `src/app/features/about/about.page.ts`, `src/app/features/not-found/not-found.page.ts`
 - Modificar: `src/app/app.ts`, `src/app/app.html`, `src/app/app.routes.ts`, `src/app/app.routes.server.ts`, `src/styles.css`
 
@@ -2646,9 +2675,9 @@ import { SeoService } from '../../core/seo.service';
   template: `
     <h1>Sobre</h1>
     <p>
-      Este projeto existe para estudar renderização no servidor (SSR) com Angular: páginas
-      estáticas geradas no build, páginas dinâmicas renderizadas a cada requisição, SEO, cache HTTP
-      e hidratação incremental.
+      Este projeto existe para estudar renderização no servidor (SSR) com Angular: páginas estáticas
+      geradas no build, páginas dinâmicas renderizadas a cada requisição, SEO, cache HTTP e
+      hidratação incremental.
     </p>
   `,
 })
@@ -2708,8 +2737,7 @@ export const routes: Routes = [
   },
   {
     path: '**',
-    loadComponent: () =>
-      import('./features/not-found/not-found.page').then((m) => m.NotFoundPage),
+    loadComponent: () => import('./features/not-found/not-found.page').then((m) => m.NotFoundPage),
   },
 ];
 ```
@@ -2886,6 +2914,7 @@ Pare. Peça autorização para push e PR da branch `feat/ui-base`.
 ### Tarefa 16: Feed, perfil, post e hidratação incremental
 
 **Arquivos:**
+
 - Criar: `src/app/features/feed/{feed.page.ts,feed.resolver.ts}`, `src/app/features/profile/{profile.page.ts,profile.resolver.ts}`, `src/app/features/post/{post.page.ts,post.resolver.ts}`, `src/app/shared-ui/author-posts.ts`
 - Modificar: `src/app/app.routes.ts`, `src/app/app.routes.server.ts`, `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md`
 
@@ -3022,7 +3051,11 @@ export class ProfilePage {
     effect(() => {
       const data = this.profile();
       if (!data) {
-        this.seo.set({ title: 'Perfil não encontrado', description: 'Perfil não encontrado.', noindex: true });
+        this.seo.set({
+          title: 'Perfil não encontrado',
+          description: 'Perfil não encontrado.',
+          noindex: true,
+        });
         return;
       }
       const { user, posts } = data;
@@ -3135,7 +3168,11 @@ export class PostPage {
     effect(() => {
       const current = this.post();
       if (!current) {
-        this.seo.set({ title: 'Post não encontrado', description: 'Post não encontrado.', noindex: true });
+        this.seo.set({
+          title: 'Post não encontrado',
+          description: 'Post não encontrado.',
+          noindex: true,
+        });
         return;
       }
       this.seo.set({
@@ -3203,7 +3240,7 @@ Em `src/app/app.routes.server.ts`, insira antes da rota `**`:
 
 - [ ] **Passo 7: Ajustar a spec (o `@defer` da fase 1 não usa curtidas)**
 
-Em `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md`, na seção 1 (tabela), troque `| Hidratação incremental (`@defer`) | Curtidas e comentários |` por `| Hidratação incremental (`@defer`) | "Mais posts do autor" (fase 1); curtidas (fase 2) |`. Na seção 5, troque o item `**Hidratação incremental:** curtidas e comentários em blocos `@defer` com `hydrate on viewport`.` por `**Hidratação incremental:** na fase 1, o bloco "Mais posts do autor" da página de post usa `@defer (on viewport; hydrate on viewport)`. Curtidas entram na fase 2.`
+Em `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md`, na seção 1 (tabela), troque `| Hidratação incremental (`@defer`) | Curtidas e comentários |` por `| Hidratação incremental (`@defer`) | "Mais posts do autor" (fase 1); curtidas (fase 2) |`. Na seção 5, troque o item `**Hidratação incremental:** curtidas e comentários em blocos `@defer`com`hydrate on viewport`.` por `**Hidratação incremental:** na fase 1, o bloco "Mais posts do autor" da página de post usa `@defer (on viewport; hydrate on viewport)`. Curtidas entram na fase 2.`
 
 - [ ] **Passo 8: Verificar no navegador de verdade**
 
@@ -3213,12 +3250,13 @@ rm -f data/dev.db* && DATABASE_PATH=data/dev.db pnpm db:seed
 DATABASE_PATH=data/dev.db PORT=4123 node dist/ssr-microblog/server/server.mjs &
 sleep 2
 echo "--- feed (HTML bruto)"; curl -s -i localhost:4123/feed | grep -iE "^HTTP|^cache-control|<title>|og:title|canonical|\(#48\)" | head
-echo "--- post 48"; curl -s localhost:4123/p/48 | grep -oE "Mais posts de @[a-z]+|rel=\"canonical\" href=\"[^\"]+\"" 
+echo "--- post 48"; curl -s localhost:4123/p/48 | grep -oE "Mais posts de @[a-z]+|rel=\"canonical\" href=\"[^\"]+\""
 echo "--- 404 post"; curl -s -i localhost:4123/p/99999 | grep -iE "^HTTP|^cache-control|Post não encontrado" | head -4
 kill %1
 ```
 
 Esperado:
+
 - `/feed`: `HTTP/1.1 200`, `Cache-Control: public, max-age=30, stale-while-revalidate=60`, `<title>Feed · Microblog</title>`, `og:title`, canonical `.../feed` e o texto `(#48)`.
 - `/p/48`: `Mais posts de @caio` e canonical `.../p/48`.
 - `/p/99999`: `HTTP/1.1 404`, `Cache-Control: no-store` e `Post não encontrado`.
@@ -3244,6 +3282,7 @@ Pare. Peça autorização para push e PR da branch `feat/ui-pages`.
 ### Tarefa 17: Playwright
 
 **Arquivos:**
+
 - Criar: `playwright.config.ts`, `e2e/ssr.e2e.ts`
 - Modificar: `package.json`
 
@@ -3447,6 +3486,7 @@ Pare. Peça autorização para push e PR da branch `test/e2e`.
 ### Tarefa 18: Dockerfile
 
 **Arquivos:**
+
 - Criar: `Dockerfile`, `.dockerignore`
 
 - [ ] **Passo 1: Branch**
@@ -3536,6 +3576,7 @@ git commit -m "chore: adiciona Dockerfile multi-stage com healthcheck"
 ### Tarefa 19: Pipeline de CI
 
 **Arquivos:**
+
 - Criar: `.github/workflows/ci.yml`
 
 - [ ] **Passo 1: Workflow**
@@ -3611,6 +3652,7 @@ git commit -m "ci: adiciona pipeline com lint, testes, build, E2E e imagem Docke
 ### Tarefa 20: README e ADRs
 
 **Arquivos:**
+
 - Criar: `README.md` (substituir o gerado pelo CLI), `docs/adr/0001-monolito-ssr-com-express.md`, `docs/adr/0002-sqlite-drizzle-e-modulo-nativo-externo.md`, `docs/adr/0003-data-fetching-via-http-loopback.md`
 
 - [ ] **Passo 1: ADR 0001**
@@ -3735,13 +3777,13 @@ docker run -p 4000:4000 -v microblog-data:/data ssr-microblog
 
 ## Qualidade
 
-| Comando | O que faz |
-|---|---|
-| `pnpm lint` / `pnpm format:check` | ESLint e Prettier |
-| `pnpm typecheck` | TypeScript sem emitir |
-| `pnpm test --no-watch` | Testes da UI (Vitest via Angular) |
-| `pnpm test:server` | Testes de servidor (Vitest em Node) |
-| `pnpm test:e2e` | Build + testes E2E com Playwright |
+| Comando                           | O que faz                           |
+| --------------------------------- | ----------------------------------- |
+| `pnpm lint` / `pnpm format:check` | ESLint e Prettier                   |
+| `pnpm typecheck`                  | TypeScript sem emitir               |
+| `pnpm test --no-watch`            | Testes da UI (Vitest via Angular)   |
+| `pnpm test:server`                | Testes de servidor (Vitest em Node) |
+| `pnpm test:e2e`                   | Build + testes E2E com Playwright   |
 
 ## Documentação
 
