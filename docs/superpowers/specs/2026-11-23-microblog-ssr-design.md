@@ -8,16 +8,16 @@ Projeto de estudo de **renderização no servidor (SSR)** com um meta-framework,
 
 ### Conceitos de SSR a exercitar
 
-| Conceito                                    | Onde aparece                                                    |
-| ------------------------------------------- | --------------------------------------------------------------- |
-| SSG (pré-renderização)                      | Landing e "sobre"                                               |
-| SSR por requisição                          | Feed, perfil e post                                             |
-| Data fetching no servidor + `TransferState` | Todas as páginas dinâmicas                                      |
-| SEO                                         | Title, meta, canonical, Open Graph, `sitemap.xml`, `robots.txt` |
-| Hidratação incremental (`@defer`)           | Curtidas e comentários                                          |
-| Cache HTTP                                  | `Cache-Control` por rota                                        |
-| Erros com status correto                    | 404 e 500 reais                                                 |
-| SSR com estado de usuário (fase 2)          | Sessão em cookie, `Vary`, `no-store`                            |
+| Conceito | Onde aparece |
+|---|---|
+| SSG (pré-renderização) | Landing e "sobre" |
+| SSR por requisição | Feed, perfil e post |
+| Data fetching no servidor + `TransferState` | Todas as páginas dinâmicas |
+| SEO | Title, meta, canonical, Open Graph, `sitemap.xml`, `robots.txt` |
+| Hidratação incremental (`@defer`) | Curtidas e comentários |
+| Cache HTTP | `Cache-Control` por rota |
+| Erros com status correto | 404 e 500 reais |
+| SSR com estado de usuário (fase 2) | Sessão em cookie, `Vary`, `no-store` |
 
 ## 2. Decisões
 
@@ -70,13 +70,13 @@ Os componentes buscam dados com `HttpClient` em `/api`, com o mesmo código no s
 
 ## 5. Renderização por rota (fase 1)
 
-| Rota          | Modo      | Cache-Control                                | Observação                                              |
-| ------------- | --------- | -------------------------------------------- | ------------------------------------------------------- |
-| `/`, `/sobre` | Prerender | `public`, longo                              | Gerada no build                                         |
-| `/feed`       | SSR       | `public, max-age=30, stale-while-revalidate` | Paginação por `?page=`                                  |
-| `/u/:handle`  | SSR       | `public, max-age=60`                         | Meta tags de perfil                                     |
-| `/p/:id`      | SSR       | `public, max-age=60`                         | Open Graph com o texto do post; 404 real se não existir |
-| `**`          | SSR       | `no-store`                                   | Página 404 com status 404                               |
+| Rota | Modo | Cache-Control | Observação |
+|---|---|---|---|
+| `/`, `/sobre` | Prerender | `public`, longo | Gerada no build |
+| `/feed` | SSR | `public, max-age=30, stale-while-revalidate` | Paginação por `?page=` |
+| `/u/:handle` | SSR | `public, max-age=60` | Meta tags de perfil |
+| `/p/:id` | SSR | `public, max-age=60` | Open Graph com o texto do post; 404 real se não existir |
+| `**` | SSR | `no-store` | Página 404 com status 404 |
 
 Na fase 2, rotas dependentes de sessão usam `private, no-store` com `Vary: Cookie`.
 
