@@ -23,7 +23,7 @@ Projeto de estudo de **renderização no servidor (SSR)** com um meta-framework,
 
 - **Framework:** Angular 22 (latest do CLI em 2026-11-23: 22.3.0) com `@angular/ssr`, TypeScript estrito, standalone components e signals.
 - **Runtime:** Node 24 LTS (o CLI exige `^22.22.3 || ^24.15.0 || >=26`), gerenciado com `fnm` (`.node-version`).
-- **Gerenciador de pacotes:** pnpm, fixado em `packageManager` e ativado via `corepack`. Dependências com build nativo (`better-sqlite3`) entram em `onlyBuiltDependencies`.
+- **Gerenciador de pacotes:** pnpm, fixado em `packageManager` e ativado via `corepack`. Dependências com build nativo (`better-sqlite3`) entram em `allowBuilds` (`pnpm-workspace.yaml`) e são marcadas como `externalDependencies` no build do Angular.
 - **Servidor:** Express, o caminho oficial do `@angular/ssr`. API e SSR no mesmo processo (monólito).
 - **Banco:** SQLite com `better-sqlite3` e Drizzle ORM (migrations versionadas).
 - **Validação:** Zod (entrada da API e variáveis de ambiente). **Log:** `pino`.
@@ -129,9 +129,16 @@ Erros seguem o formato único `{ "error": { "code", "message" } }`. A configura�
 
 Cada fase é entregável isoladamente e tem seu próprio plano de implementação.
 
-## 10. Riscos e pontos a confirmar no setup
+## 10. Verificado no setup (2026-11-23)
 
-- Confirmar que o Vitest é o runner padrão do Angular 22 e como ele integra com o CLI.
-- Confirmar a API atual de `serverRoutes` e de hidratação incremental no Angular 22.
-- Garantir que `better-sqlite3` compila com Node 24 e pnpm (`onlyBuiltDependencies`) e na imagem Docker.
+- O Vitest 5 é o runner padrão do Angular 22 (`@angular/build:unit-test`). Os testes de servidor rodam num Vitest separado em Node puro.
+- `better-sqlite3` não funciona embutido no bundle do servidor; é preciso `externalDependencies` e ele deve existir em `node_modules` na imagem Docker.
+- O Angular 22 valida o header `Host` (SSRF). Em runtime, `NG_ALLOWED_HOSTS` lista os hosts aceitos.
+- `ServerRoute` aceita `headers` e `status`; `RESPONSE_INIT` permite definir status e headers a partir de um resolver.
+- A hidratação incremental está habilitada por padrão.
+- Páginas prerenderizadas não emitem `canonical`/`og:url`, porque a URL pública só é conhecida em runtime.
+
+## 11. Riscos em aberto
+
 - Evitar que o cache sirva conteúdo de um usuário a outro (fase 2).
+- Respostas 404 de `/p/:id` não devem ser cacheadas como as de sucesso (cobertas por teste E2E).

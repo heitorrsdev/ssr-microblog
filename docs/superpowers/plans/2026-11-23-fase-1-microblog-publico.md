@@ -1,0 +1,3794 @@
+# Microblog SSR, Fase 1 (público, somente leitura): Plano de Implementação
+
+> **Para agentes:** SUB-SKILL OBRIGATÓRIA: use `superpowers:subagent-driven-development` (recomendado) ou `superpowers:executing-plans` para executar este plano tarefa a tarefa. Os passos usam checkboxes (`- [ ]`) para acompanhamento.
+
+**Objetivo:** Entregar a fase 1 do microblog: feed, perfil e página de post renderizados no servidor com Angular 22, SEO, cache HTTP, hidratação incremental, API em SQLite, testes, Docker e CI.
+
+**Arquitetura:** Monólito Node. Um processo Express serve a API (`/api/*`), `sitemap.xml`, `robots.txt` e delega todo o resto ao Angular SSR. O servidor é organizado em camadas (`api` → `services` → `db`) e testado sem subir o Angular. Cada rota Angular escolhe seu modo de renderização (Prerender ou Server) em `app.routes.server.ts`.
+
+**Stack:** Node 24 (fnm), pnpm 12, Angular 22 + `@angular/ssr`, Express 5, SQLite (`better-sqlite3`) + Drizzle, Zod 4, pino, Vitest 5, Playwright, Docker, GitHub Actions.
+
+**Spec:** `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md`. Regras de trabalho: `AGENTS.md` (SRP, KISS, commits sem coautoria).
+
+---
+
+## Fatos verificados (não reverificar, só usar)
+
+Gerei um projeto Angular 22 descartável e testei antes de escrever este plano:
+
+- `ng new ... --ssr` na 22.3.0 gera `src/server.ts` (Express 5, `AngularNodeAppEngine`), `src/main.server.ts`, `src/app/app.config.server.ts` e `src/app/app.routes.server.ts`. A classe raiz se chama `App`, sem sufixo `Component`.
+- O runner padrão é **Vitest 5** (`@angular/build:unit-test`). Aceita `--include` e `--exclude`.
+- O CLI exige Node `^22.22.3 || ^24.15.0 || >=26`. O pnpm gerado é o 12.x e usa `allowBuilds` em `pnpm-workspace.yaml` (não `onlyBuiltDependencies`).
+- **`better-sqlite3` não pode ser embutido no bundle do servidor** (`__dirname is not defined`). Solução testada: `"externalDependencies": ["better-sqlite3"]` nas opções de build do `angular.json`. Drizzle embute normalmente.
+- O Angular 22 bloqueia requisições cujo `Host` não esteja permitido (SSRF). Em runtime, `NG_ALLOWED_HOSTS=localhost,127.0.0.1` (separado por vírgula) libera. Host fora da lista recebe 400.
+- `ServerRoute` aceita `headers` e `status` (o modo `Prerender` aceita só `headers`). `RESPONSE_INIT` (`@angular/core`) é um `InjectionToken<ResponseInit | null>`: no servidor permite definir `status` e `headers` da resposta; no navegador é `null`.
+- Hidratação incremental **já vem habilitada** com `provideClientHydration()`; `withIncrementalHydration()` está deprecado. A sintaxe `@defer (hydrate on viewport)` é suportada.
+
+## Convenções deste plano
+
+- **Node 24 ativo em todo comando.** Confira com `node -v` (deve mostrar `v24.x`). Se o shell estiver em outra versão, rode `fnm use 24` ou prefixe com `fnm exec --using=24`.
+- **Commits:** português, Conventional Commits, **sem `Co-Authored-By` e sem menção a IA**. Rode `git add` com caminhos explícitos.
+- **Fatias e PRs:** cada fatia (A–H) é uma branch a partir da `main` atualizada. No fim de cada fatia há um **checkpoint**: pare e peça autorização ao usuário para `git push` e abrir o PR (o `AGENTS.md` proíbe push e PR sem pedido). Só comece a fatia seguinte depois que o usuário disser que o PR foi mergeado, e então rode `git switch main && git pull`.
+- **TDD** nas camadas de serviço e API: teste falhando, implementação mínima, teste passando, commit.
+- **Idioma:** textos de interface e nomes de testes em português; identificadores de código em inglês.
+- Testes do servidor: `pnpm test:server`. Testes da UI: `pnpm test --no-watch`.
+
+## Mapa de arquivos
+
+```
+.node-version, .prettierrc, .prettierignore, .env.example, drizzle.config.ts, vitest.server.config.ts
+playwright.config.ts, Dockerfile, .dockerignore, .github/workflows/ci.yml, README.md
+drizzle/                                  # migrations geradas pelo drizzle-kit
+docs/adr/0001..0003-*.md
+e2e/ssr.e2e.ts
+src/shared/dto.ts                         # tipos compartilhados UI <-> API
+src/server.ts                             # entrypoint: Express + Angular SSR
+src/server/config.ts                      # variáveis de ambiente (Zod)
+src/server/logger.ts                      # pino
+src/server/errors.ts                      # AppError, NotFoundError
+src/server/pagination.ts                  # offsetOf, toPage
+src/server/app.ts                         # createApp(): Express sem listen
+src/server/render-error-handler.ts        # 500 do SSR
+src/server/db/{schema,database,seed,seed.run}.ts
+src/server/db/{posts,users}.repository.ts
+src/server/services/{mappers,posts.service,users.service}.ts
+src/server/api/{schemas,router,error-handler}.ts
+src/server/seo/seo.router.ts              # sitemap.xml e robots.txt
+src/server/testing/{test-db,fixtures}.ts  # apoio a testes (não é spec)
+src/app/core/{site-url,seo.service,api.service,page-param,not-found,text}.ts
+src/app/features/home|about|not-found|feed|profile|post/...
+src/app/shared-ui/{post-card,pagination,author-posts}.ts  # componentes reutilizáveis
+src/app/app.{ts,html,config.ts,routes.ts,routes.server.ts}
+```
+
+---
+
+# Fatia A: Fundação (branch `chore/scaffold`)
+
+### Tarefa 1: Criar o projeto Angular 22 com SSR
+
+**Arquivos:**
+- Criar (via CLI): toda a estrutura do projeto na raiz do repositório
+- Modificar: `src/app/app.html`, `src/app/app.spec.ts`
+
+- [ ] **Passo 1: Criar a branch**
+
+```bash
+git switch main && git pull && git switch -c chore/scaffold
+```
+
+- [ ] **Passo 2: Ativar Node 24 e pnpm**
+
+```bash
+fnm use 24 && corepack enable pnpm && node -v && pnpm -v
+```
+
+Esperado: `v24.x.x` e `12.x.x`.
+
+- [ ] **Passo 3: Gerar o projeto fora do repo e copiar**
+
+O `ng new` não gosta de diretório não vazio (já temos `AGENTS.md`, `docs/`).
+
+```bash
+GEN=$(mktemp -d)
+(cd "$GEN" && CI=1 NG_CLI_ANALYTICS=false pnpm dlx @angular/cli@22 new ssr-microblog \
+  --ssr --routing --style=css --package-manager=pnpm --skip-git --skip-install --defaults)
+rsync -a --exclude=node_modules --exclude=.angular "$GEN/ssr-microblog/" ./
+rm -rf "$GEN"
+ls
+```
+
+Esperado: `angular.json package.json pnpm-workspace.yaml src public tsconfig*.json` ao lado de `AGENTS.md CLAUDE.md docs`.
+
+- [ ] **Passo 4: Simplificar o shell gerado**
+
+Substitua o conteúdo de `src/app/app.html` (hoje uma página de boas-vindas com ~20 kB) por:
+
+```html
+<router-outlet />
+```
+
+Substitua `src/app/app.spec.ts` por:
+
+```ts
+import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
+import { App } from './app';
+
+describe('App', () => {
+  it('should create the app', async () => {
+    await TestBed.configureTestingModule({
+      imports: [App],
+      providers: [provideRouter([])],
+    }).compileComponents();
+
+    expect(TestBed.createComponent(App).componentInstance).toBeTruthy();
+  });
+});
+```
+
+Em `src/app/app.ts`, remova o `signal` `title` e o import de `signal`:
+
+```ts
+import { Component } from '@angular/core';
+import { RouterOutlet } from '@angular/router';
+
+@Component({
+  imports: [RouterOutlet],
+  selector: 'app-root',
+  styleUrl: './app.css',
+  templateUrl: './app.html',
+})
+export class App {}
+```
+
+- [ ] **Passo 5: Instalar, testar e buildar**
+
+```bash
+pnpm install
+pnpm test --no-watch
+pnpm build
+```
+
+Esperado: `1 passed` nos testes e `Application bundle generation complete` no build.
+
+- [ ] **Passo 6: Commit**
+
+```bash
+git add -A
+git status --short   # confira: nada de node_modules, .angular ou dist
+git commit -m "chore: cria projeto Angular 22 com SSR"
+```
+
+### Tarefa 2: Node, TypeScript estrito, ESLint e Prettier
+
+**Arquivos:**
+- Criar: `.node-version`, `.prettierignore` (e `.prettierrc` se não existir)
+- Modificar: `package.json`, `tsconfig.json`, `.gitignore`
+
+- [ ] **Passo 1: Fixar Node**
+
+Crie `.node-version`:
+
+```
+24
+```
+
+Em `package.json`, adicione logo após `"private": true,`:
+
+```json
+  "engines": { "node": ">=24.15.0" },
+```
+
+- [ ] **Passo 2: TypeScript estrito explícito**
+
+Em `tsconfig.json`, dentro de `compilerOptions`, adicione `"strict": true,` como primeira propriedade.
+
+- [ ] **Passo 3: ESLint**
+
+```bash
+pnpm exec ng add angular-eslint --skip-confirmation
+pnpm exec ng lint
+```
+
+Esperado: `eslint.config.js` criado, alvo `lint` no `angular.json` e `All files pass linting.` Se o código gerado tiver avisos, corrija-os sem desabilitar regras.
+
+- [ ] **Passo 4: Prettier**
+
+```bash
+ls -a | grep -i prettier
+```
+
+Se não existir `.prettierrc`, crie:
+
+```json
+{
+  "printWidth": 100,
+  "singleQuote": true
+}
+```
+
+Crie `.prettierignore`:
+
+```
+dist
+.angular
+node_modules
+pnpm-lock.yaml
+drizzle
+coverage
+playwright-report
+test-results
+```
+
+- [ ] **Passo 5: Scripts**
+
+Em `package.json`, dentro de `scripts`, adicione:
+
+```json
+    "lint": "ng lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.spec.json",
+```
+
+- [ ] **Passo 6: `.gitignore`**
+
+Acrescente ao final do `.gitignore`:
+
+```
+# dados locais e artefatos de teste
+data/
+playwright-report/
+test-results/
+.env
+```
+
+- [ ] **Passo 7: Normalizar e verificar tudo**
+
+```bash
+pnpm format
+pnpm format:check && pnpm lint && pnpm typecheck && pnpm test --no-watch && pnpm build
+```
+
+Esperado: todos terminam com código 0.
+
+- [ ] **Passo 8: Commit**
+
+```bash
+git add -A
+git commit -m "chore: configura Node 24, TypeScript estrito, ESLint e Prettier"
+```
+
+### Tarefa 3: Infraestrutura do servidor (dependências e testes de servidor)
+
+**Arquivos:**
+- Criar: `vitest.server.config.ts`, `drizzle.config.ts`, `.env.example`
+- Modificar: `package.json`, `pnpm-workspace.yaml`, `angular.json`, `tsconfig.spec.json`, `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md`
+
+- [ ] **Passo 1: Dependências**
+
+```bash
+pnpm add better-sqlite3 drizzle-orm zod pino
+pnpm add -D drizzle-kit @types/better-sqlite3 supertest @types/supertest tsx
+```
+
+- [ ] **Passo 2: Permitir o build nativo no pnpm 12**
+
+Em `pnpm-workspace.yaml`, dentro de `allowBuilds`, acrescente a linha (mantenha as existentes):
+
+```yaml
+  better-sqlite3: true
+```
+
+- [ ] **Passo 3: Externalizar o módulo nativo e isolar os testes**
+
+No `angular.json`, em `projects.ssr-microblog.architect.build.options`, adicione:
+
+```json
+"externalDependencies": ["better-sqlite3"],
+```
+
+Em `architect.test`, troque por:
+
+```json
+"test": {
+  "builder": "@angular/build:unit-test",
+  "options": {
+    "exclude": ["server/**"]
+  }
+}
+```
+
+Em `tsconfig.spec.json`, troque `types` por:
+
+```json
+"types": ["vitest/globals", "node"]
+```
+
+- [ ] **Passo 4: Config do Vitest do servidor (Node puro)**
+
+Crie `vitest.server.config.ts`:
+
+```ts
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    environment: 'node',
+    include: ['src/server/**/*.spec.ts'],
+  },
+});
+```
+
+- [ ] **Passo 5: Drizzle Kit e scripts**
+
+Crie `drizzle.config.ts`:
+
+```ts
+import { defineConfig } from 'drizzle-kit';
+
+export default defineConfig({
+  dialect: 'sqlite',
+  schema: './src/server/db/schema.ts',
+  out: './drizzle',
+});
+```
+
+Em `package.json`, em `scripts`, adicione:
+
+```json
+    "test:server": "vitest run --config vitest.server.config.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:seed": "tsx src/server/db/seed.run.ts",
+```
+
+Crie `.env.example`:
+
+```
+PORT=4000
+SITE_URL=http://localhost:4000
+DATABASE_PATH=data/microblog.db
+MIGRATIONS_DIR=drizzle
+LOG_LEVEL=info
+# Hosts aceitos pelo Angular SSR (proteção contra SSRF). Em produção, use o domínio público.
+NG_ALLOWED_HOSTS=localhost,127.0.0.1
+```
+
+- [ ] **Passo 6: Atualizar a spec com o que foi verificado**
+
+Em `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md`:
+
+1. Na seção 2, troque `Dependências com build nativo (`better-sqlite3`) entram em `onlyBuiltDependencies`.` por `Dependências com build nativo (`better-sqlite3`) entram em `allowBuilds` (`pnpm-workspace.yaml`) e são marcadas como `externalDependencies` no build do Angular.`
+2. Substitua toda a seção 10 (de `## 10. Riscos e pontos a confirmar no setup` até o fim do arquivo) por:
+
+```markdown
+## 10. Verificado no setup (2026-11-23)
+
+- O Vitest 5 é o runner padrão do Angular 22 (`@angular/build:unit-test`). Os testes de servidor rodam num Vitest separado em Node puro.
+- `better-sqlite3` não funciona embutido no bundle do servidor; é preciso `externalDependencies` e ele deve existir em `node_modules` na imagem Docker.
+- O Angular 22 valida o header `Host` (SSRF). Em runtime, `NG_ALLOWED_HOSTS` lista os hosts aceitos.
+- `ServerRoute` aceita `headers` e `status`; `RESPONSE_INIT` permite definir status e headers a partir de um resolver.
+- A hidratação incremental está habilitada por padrão.
+- Páginas prerenderizadas não emitem `canonical`/`og:url`, porque a URL pública só é conhecida em runtime.
+
+## 11. Riscos em aberto
+
+- Evitar que o cache sirva conteúdo de um usuário a outro (fase 2).
+- Respostas 404 de `/p/:id` não devem ser cacheadas como as de sucesso (cobertas por teste E2E).
+```
+
+- [ ] **Passo 7: Verificar**
+
+```bash
+pnpm install
+pnpm format && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test --no-watch && pnpm build
+```
+
+Esperado: tudo em código 0. (`pnpm test:server` ainda não tem testes; só passa a existir na tarefa 4.)
+
+- [ ] **Passo 8: Commit**
+
+```bash
+git add -A
+git commit -m "chore: adiciona dependências do servidor e testes de servidor em Node"
+```
+
+### Checkpoint da fatia A
+
+Pare. Peça autorização ao usuário para `git push -u origin chore/scaffold` e para abrir o PR (`gh pr create`). Corpo do PR: resumo das 3 tarefas e como verificar (`pnpm lint && pnpm typecheck && pnpm test --no-watch && pnpm build`). Sem linhas de coautoria ou de geração por IA.
+
+---
+
+# Fatia B: Configuração e banco (branch `feat/config-db`)
+
+### Tarefa 4: Configuração por ambiente
+
+**Arquivos:**
+- Criar: `src/server/config.ts`, `src/server/config.spec.ts`
+
+- [ ] **Passo 1: Branch**
+
+```bash
+git switch main && git pull && git switch -c feat/config-db
+```
+
+- [ ] **Passo 2: Teste falhando**
+
+Crie `src/server/config.spec.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { loadConfig } from './config';
+
+describe('loadConfig', () => {
+  it('usa valores padrão quando o ambiente está vazio', () => {
+    expect(loadConfig({})).toEqual({
+      PORT: 4000,
+      DATABASE_PATH: 'data/microblog.db',
+      MIGRATIONS_DIR: 'drizzle',
+      SITE_URL: 'http://localhost:4000',
+      LOG_LEVEL: 'info',
+    });
+  });
+
+  it('converte PORT para número', () => {
+    expect(loadConfig({ PORT: '8080' }).PORT).toBe(8080);
+  });
+
+  it('remove a barra final de SITE_URL', () => {
+    expect(loadConfig({ SITE_URL: 'https://exemplo.test/' }).SITE_URL).toBe('https://exemplo.test');
+  });
+
+  it('rejeita PORT inválida', () => {
+    expect(() => loadConfig({ PORT: 'abc' })).toThrow();
+  });
+
+  it('rejeita LOG_LEVEL desconhecido', () => {
+    expect(() => loadConfig({ LOG_LEVEL: 'barulhento' })).toThrow();
+  });
+});
+```
+
+- [ ] **Passo 3: Ver falhar**
+
+Run: `pnpm test:server`
+Esperado: FAIL com `Cannot find module './config'` (ou equivalente).
+
+- [ ] **Passo 4: Implementar**
+
+Crie `src/server/config.ts`:
+
+```ts
+import { z } from 'zod';
+
+const schema = z.object({
+  PORT: z.coerce.number().int().positive().default(4000),
+  DATABASE_PATH: z.string().min(1).default('data/microblog.db'),
+  MIGRATIONS_DIR: z.string().min(1).default('drizzle'),
+  SITE_URL: z
+    .url()
+    .default('http://localhost:4000')
+    .transform((value) => value.replace(/\/$/, '')),
+  LOG_LEVEL: z
+    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+    .default('info'),
+});
+
+export type Config = z.infer<typeof schema>;
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  return schema.parse(env);
+}
+```
+
+- [ ] **Passo 5: Ver passar**
+
+Run: `pnpm test:server`
+Esperado: `5 passed`.
+
+- [ ] **Passo 6: Commit**
+
+```bash
+git add src/server/config.ts src/server/config.spec.ts
+git commit -m "feat: adiciona configuração do servidor validada com Zod"
+```
+
+### Tarefa 5: Logger e tipos compartilhados
+
+**Arquivos:**
+- Criar: `src/server/logger.ts`, `src/shared/dto.ts`, `src/server/errors.ts`, `src/server/pagination.ts`, `src/server/pagination.spec.ts`
+
+- [ ] **Passo 1: Tipos compartilhados**
+
+Crie `src/shared/dto.ts`:
+
+```ts
+export interface AuthorDto {
+  handle: string;
+  displayName: string;
+}
+
+export interface PostDto {
+  id: number;
+  body: string;
+  createdAt: string;
+  author: AuthorDto;
+}
+
+export interface UserDto {
+  handle: string;
+  displayName: string;
+  bio: string;
+  createdAt: string;
+  postCount: number;
+}
+
+export interface Page<T> {
+  items: T[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+```
+
+- [ ] **Passo 2: Logger**
+
+Crie `src/server/logger.ts`:
+
+```ts
+import pino, { type Logger } from 'pino';
+
+export type { Logger };
+
+export function createLogger(level: string): Logger {
+  return pino({ level });
+}
+```
+
+- [ ] **Passo 3: Erros de domínio**
+
+Crie `src/server/errors.ts`:
+
+```ts
+export class AppError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'AppError';
+  }
+}
+
+export class NotFoundError extends AppError {
+  constructor(code: string, message: string) {
+    super(404, code, message);
+    this.name = 'NotFoundError';
+  }
+}
+```
+
+- [ ] **Passo 4: Teste falhando de paginação**
+
+Crie `src/server/pagination.spec.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { offsetOf, toPage } from './pagination';
+
+describe('offsetOf', () => {
+  it('calcula o deslocamento a partir de página e limite', () => {
+    expect(offsetOf({ page: 1, limit: 10 })).toBe(0);
+    expect(offsetOf({ page: 3, limit: 10 })).toBe(20);
+  });
+});
+
+describe('toPage', () => {
+  it('monta a página com o total de páginas arredondado para cima', () => {
+    expect(toPage(['a', 'b'], 5, { page: 1, limit: 2 })).toEqual({
+      items: ['a', 'b'],
+      page: 1,
+      limit: 2,
+      total: 5,
+      totalPages: 3,
+    });
+  });
+
+  it('tem ao menos uma página mesmo sem itens', () => {
+    expect(toPage([], 0, { page: 1, limit: 10 }).totalPages).toBe(1);
+  });
+});
+```
+
+Run: `pnpm test:server`
+Esperado: FAIL (`Cannot find module './pagination'`).
+
+- [ ] **Passo 5: Implementar paginação**
+
+Crie `src/server/pagination.ts`:
+
+```ts
+import type { Page } from '../shared/dto';
+
+export interface PageRequest {
+  page: number;
+  limit: number;
+}
+
+export const offsetOf = ({ page, limit }: PageRequest): number => (page - 1) * limit;
+
+export function toPage<T>(items: T[], total: number, { page, limit }: PageRequest): Page<T> {
+  return { items, page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) };
+}
+```
+
+- [ ] **Passo 6: Verificar**
+
+```bash
+pnpm test:server && pnpm typecheck && pnpm lint
+```
+
+Esperado: testes passam, sem erros.
+
+- [ ] **Passo 7: Commit**
+
+```bash
+git add src/shared src/server/logger.ts src/server/errors.ts src/server/pagination.ts src/server/pagination.spec.ts
+git commit -m "feat: adiciona DTOs compartilhados, logger, erros e paginação"
+```
+
+### Tarefa 6: Schema, migrations e conexão com o banco
+
+**Arquivos:**
+- Criar: `src/server/db/schema.ts`, `src/server/db/database.ts`, `src/server/db/database.spec.ts`, `src/server/testing/test-db.ts`, `src/server/testing/fixtures.ts`, `drizzle/` (gerado)
+
+- [ ] **Passo 1: Teste falhando**
+
+Crie `src/server/db/database.spec.ts`:
+
+```ts
+import { afterEach, describe, expect, it } from 'vitest';
+import { createDb, type DbHandle } from './database';
+import { posts, users } from './schema';
+
+describe('createDb', () => {
+  let handle: DbHandle;
+
+  afterEach(() => handle.close());
+
+  it('aplica as migrations e permite inserir e ler', () => {
+    handle = createDb(':memory:', 'drizzle');
+    const user = handle.db
+      .insert(users)
+      .values({ handle: 'maria', displayName: 'Maria' })
+      .returning()
+      .get();
+    handle.db.insert(posts).values({ userId: user.id, body: 'olá' }).run();
+
+    expect(handle.db.select().from(posts).all()).toHaveLength(1);
+  });
+
+  it('rejeita post de usuário inexistente (foreign keys ligadas)', () => {
+    handle = createDb(':memory:', 'drizzle');
+
+    expect(() => handle.db.insert(posts).values({ userId: 999, body: 'x' }).run()).toThrow();
+  });
+
+  it('rejeita handle duplicado', () => {
+    handle = createDb(':memory:', 'drizzle');
+    handle.db.insert(users).values({ handle: 'ana', displayName: 'Ana' }).run();
+
+    expect(() =>
+      handle.db.insert(users).values({ handle: 'ana', displayName: 'Outra' }).run(),
+    ).toThrow();
+  });
+});
+```
+
+Run: `pnpm test:server`
+Esperado: FAIL (`Cannot find module './database'`).
+
+- [ ] **Passo 2: Schema**
+
+Crie `src/server/db/schema.ts`:
+
+```ts
+import { sql } from 'drizzle-orm';
+import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+
+const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`;
+
+export const users = sqliteTable('users', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  handle: text('handle').notNull().unique(),
+  displayName: text('display_name').notNull(),
+  bio: text('bio').notNull().default(''),
+  createdAt: text('created_at').notNull().default(now),
+});
+
+export const posts = sqliteTable(
+  'posts',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id),
+    body: text('body').notNull(),
+    createdAt: text('created_at').notNull().default(now),
+  },
+  (table) => [index('posts_created_at_idx').on(table.createdAt)],
+);
+```
+
+- [ ] **Passo 3: Gerar a migration**
+
+```bash
+pnpm db:generate
+ls drizzle
+```
+
+Esperado: `drizzle/0000_<nome>.sql` e `drizzle/meta/`. Confira que o SQL cria `users`, `posts` e o índice `posts_created_at_idx`.
+
+- [ ] **Passo 4: Conexão**
+
+Crie `src/server/db/database.ts`:
+
+```ts
+import Database from 'better-sqlite3';
+import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import * as schema from './schema';
+
+export type Db = BetterSQLite3Database<typeof schema>;
+
+export interface DbHandle {
+  db: Db;
+  close: () => void;
+}
+
+export function createDb(path: string, migrationsDir: string): DbHandle {
+  if (path !== ':memory:') {
+    mkdirSync(dirname(path), { recursive: true });
+  }
+  const sqlite = new Database(path);
+  sqlite.pragma('journal_mode = WAL');
+  sqlite.pragma('foreign_keys = ON');
+  const db = drizzle(sqlite, { schema });
+  migrate(db, { migrationsFolder: migrationsDir });
+  return { db, close: () => sqlite.close() };
+}
+```
+
+- [ ] **Passo 5: Apoio a testes**
+
+Crie `src/server/testing/test-db.ts`:
+
+```ts
+import { createDb, type DbHandle } from '../db/database';
+
+export function createTestDb(): DbHandle {
+  return createDb(':memory:', 'drizzle');
+}
+```
+
+Crie `src/server/testing/fixtures.ts`:
+
+```ts
+import type { Db } from '../db/database';
+import { posts, users } from '../db/schema';
+
+export function insertUser(db: Db, handle: string, displayName = handle) {
+  return db
+    .insert(users)
+    .values({ handle, displayName, bio: `Bio de ${handle}` })
+    .returning()
+    .get();
+}
+
+export function insertPost(db: Db, userId: number, body: string, createdAt: string) {
+  return db.insert(posts).values({ userId, body, createdAt }).returning().get();
+}
+```
+
+- [ ] **Passo 6: Ver passar e verificar**
+
+```bash
+pnpm test:server && pnpm typecheck && pnpm lint && pnpm format:check
+```
+
+Esperado: `3 passed` no `database.spec.ts` (mais os anteriores).
+
+- [ ] **Passo 7: Commit**
+
+```bash
+git add src/server/db src/server/testing drizzle
+git commit -m "feat: adiciona schema, migrations e conexão SQLite com Drizzle"
+```
+
+### Checkpoint da fatia B
+
+Pare. Peça autorização para push e PR da branch `feat/config-db`.
+
+---
+
+# Fatia C: Serviços e API HTTP (branch `feat/api`)
+
+### Tarefa 7: Repositórios
+
+Os repositórios só executam consultas e são exercitados pelos testes de serviço e de API (banco real em memória, sem mocks). Por isso não têm spec próprio.
+
+**Arquivos:**
+- Criar: `src/server/db/posts.repository.ts`, `src/server/db/users.repository.ts`
+
+- [ ] **Passo 1: Branch**
+
+```bash
+git switch main && git pull && git switch -c feat/api
+```
+
+- [ ] **Passo 2: Repositório de posts**
+
+Crie `src/server/db/posts.repository.ts`:
+
+```ts
+import { count, desc, eq } from 'drizzle-orm';
+import type { Db } from './database';
+import { posts, users } from './schema';
+
+export interface PostRow {
+  id: number;
+  body: string;
+  createdAt: string;
+  authorHandle: string;
+  authorDisplayName: string;
+}
+
+export interface PostsFilter {
+  userId?: number;
+}
+
+export function createPostsRepository(db: Db) {
+  const columns = {
+    id: posts.id,
+    body: posts.body,
+    createdAt: posts.createdAt,
+    authorHandle: users.handle,
+    authorDisplayName: users.displayName,
+  };
+  const byUser = (userId?: number) => (userId === undefined ? undefined : eq(posts.userId, userId));
+
+  return {
+    findPage(options: PostsFilter & { limit: number; offset: number }): PostRow[] {
+      return db
+        .select(columns)
+        .from(posts)
+        .innerJoin(users, eq(posts.userId, users.id))
+        .where(byUser(options.userId))
+        .orderBy(desc(posts.createdAt), desc(posts.id))
+        .limit(options.limit)
+        .offset(options.offset)
+        .all();
+    },
+
+    count(filter: PostsFilter = {}): number {
+      return db.select({ total: count() }).from(posts).where(byUser(filter.userId)).get()?.total ?? 0;
+    },
+
+    findById(id: number): PostRow | undefined {
+      return db
+        .select(columns)
+        .from(posts)
+        .innerJoin(users, eq(posts.userId, users.id))
+        .where(eq(posts.id, id))
+        .get();
+    },
+
+    listIds(): number[] {
+      return db
+        .select({ id: posts.id })
+        .from(posts)
+        .orderBy(desc(posts.id))
+        .all()
+        .map((row) => row.id);
+    },
+  };
+}
+
+export type PostsRepository = ReturnType<typeof createPostsRepository>;
+```
+
+- [ ] **Passo 3: Repositório de usuários**
+
+Crie `src/server/db/users.repository.ts`:
+
+```ts
+import { asc, eq } from 'drizzle-orm';
+import type { Db } from './database';
+import { users } from './schema';
+
+export type UserRow = typeof users.$inferSelect;
+
+export function createUsersRepository(db: Db) {
+  return {
+    findByHandle(handle: string): UserRow | undefined {
+      return db.select().from(users).where(eq(users.handle, handle)).get();
+    },
+
+    listHandles(): string[] {
+      return db
+        .select({ handle: users.handle })
+        .from(users)
+        .orderBy(asc(users.handle))
+        .all()
+        .map((row) => row.handle);
+    },
+  };
+}
+
+export type UsersRepository = ReturnType<typeof createUsersRepository>;
+```
+
+- [ ] **Passo 4: Verificar compilação**
+
+```bash
+pnpm typecheck && pnpm lint
+```
+
+Esperado: sem erros. (Se o ESLint apontar formatação, rode `pnpm format`.)
+
+- [ ] **Passo 5: Commit**
+
+```bash
+git add src/server/db/posts.repository.ts src/server/db/users.repository.ts
+git commit -m "feat: adiciona repositórios de posts e usuários"
+```
+
+### Tarefa 8: Serviços (TDD)
+
+**Arquivos:**
+- Criar: `src/server/services/mappers.ts`, `src/server/services/posts.service.ts`, `src/server/services/posts.service.spec.ts`, `src/server/services/users.service.ts`, `src/server/services/users.service.spec.ts`
+
+- [ ] **Passo 1: Testes falhando do serviço de posts**
+
+Crie `src/server/services/posts.service.spec.ts`:
+
+```ts
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { DbHandle } from '../db/database';
+import { createPostsRepository } from '../db/posts.repository';
+import { NotFoundError } from '../errors';
+import { insertPost, insertUser } from '../testing/fixtures';
+import { createTestDb } from '../testing/test-db';
+import { createPostsService } from './posts.service';
+
+describe('PostsService', () => {
+  let handle: DbHandle;
+  let service: ReturnType<typeof createPostsService>;
+
+  beforeEach(() => {
+    handle = createTestDb();
+    service = createPostsService({ posts: createPostsRepository(handle.db) });
+    const maria = insertUser(handle.db, 'maria', 'Maria Souza');
+    insertPost(handle.db, maria.id, 'primeiro', '2026-11-01T10:00:00.000Z');
+    insertPost(handle.db, maria.id, 'segundo', '2026-11-02T10:00:00.000Z');
+    insertPost(handle.db, maria.id, 'terceiro', '2026-11-03T10:00:00.000Z');
+  });
+
+  afterEach(() => handle.close());
+
+  describe('list', () => {
+    it('devolve os posts mais novos primeiro e informa o total de páginas', () => {
+      const page = service.list({ page: 1, limit: 2 });
+
+      expect(page.items.map((post) => post.body)).toEqual(['terceiro', 'segundo']);
+      expect(page).toMatchObject({ page: 1, limit: 2, total: 3, totalPages: 2 });
+    });
+
+    it('devolve a segunda página com o restante', () => {
+      const page = service.list({ page: 2, limit: 2 });
+
+      expect(page.items.map((post) => post.body)).toEqual(['primeiro']);
+    });
+
+    it('devolve página vazia além do fim, sem erro', () => {
+      expect(service.list({ page: 9, limit: 2 }).items).toEqual([]);
+    });
+  });
+
+  describe('get', () => {
+    it('devolve o post com o autor', () => {
+      const [newest] = service.list({ page: 1, limit: 1 }).items;
+
+      expect(service.get(newest.id)).toEqual({
+        id: newest.id,
+        body: 'terceiro',
+        createdAt: '2026-11-03T10:00:00.000Z',
+        author: { handle: 'maria', displayName: 'Maria Souza' },
+      });
+    });
+
+    it('lança NotFoundError quando o post não existe', () => {
+      expect(() => service.get(999)).toThrow(NotFoundError);
+    });
+  });
+});
+```
+
+Run: `pnpm test:server`
+Esperado: FAIL (`Cannot find module './posts.service'`).
+
+- [ ] **Passo 2: Mapper e serviço de posts**
+
+Crie `src/server/services/mappers.ts`:
+
+```ts
+import type { PostDto } from '../../shared/dto';
+import type { PostRow } from '../db/posts.repository';
+
+export function toPostDto(row: PostRow): PostDto {
+  return {
+    id: row.id,
+    body: row.body,
+    createdAt: row.createdAt,
+    author: { handle: row.authorHandle, displayName: row.authorDisplayName },
+  };
+}
+```
+
+Crie `src/server/services/posts.service.ts`:
+
+```ts
+import type { Page, PostDto } from '../../shared/dto';
+import type { PostsRepository } from '../db/posts.repository';
+import { NotFoundError } from '../errors';
+import { offsetOf, toPage, type PageRequest } from '../pagination';
+import { toPostDto } from './mappers';
+
+export function createPostsService(deps: { posts: PostsRepository }) {
+  return {
+    list(request: PageRequest): Page<PostDto> {
+      const rows = deps.posts.findPage({ limit: request.limit, offset: offsetOf(request) });
+      return toPage(rows.map(toPostDto), deps.posts.count(), request);
+    },
+
+    get(id: number): PostDto {
+      const row = deps.posts.findById(id);
+      if (!row) {
+        throw new NotFoundError('post_not_found', 'Post não encontrado');
+      }
+      return toPostDto(row);
+    },
+  };
+}
+
+export type PostsService = ReturnType<typeof createPostsService>;
+```
+
+Run: `pnpm test:server`
+Esperado: os 5 testes de `PostsService` passam.
+
+- [ ] **Passo 3: Commit parcial**
+
+```bash
+git add src/server/services/mappers.ts src/server/services/posts.service.ts src/server/services/posts.service.spec.ts
+git commit -m "feat: adiciona serviço de posts"
+```
+
+- [ ] **Passo 4: Testes falhando do serviço de usuários**
+
+Crie `src/server/services/users.service.spec.ts`:
+
+```ts
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { DbHandle } from '../db/database';
+import { createPostsRepository } from '../db/posts.repository';
+import { createUsersRepository } from '../db/users.repository';
+import { NotFoundError } from '../errors';
+import { insertPost, insertUser } from '../testing/fixtures';
+import { createTestDb } from '../testing/test-db';
+import { createUsersService } from './users.service';
+
+describe('UsersService', () => {
+  let handle: DbHandle;
+  let service: ReturnType<typeof createUsersService>;
+
+  beforeEach(() => {
+    handle = createTestDb();
+    service = createUsersService({
+      users: createUsersRepository(handle.db),
+      posts: createPostsRepository(handle.db),
+    });
+    const maria = insertUser(handle.db, 'maria', 'Maria Souza');
+    const joao = insertUser(handle.db, 'joao', 'João Lima');
+    insertPost(handle.db, maria.id, 'da maria 1', '2026-11-01T10:00:00.000Z');
+    insertPost(handle.db, maria.id, 'da maria 2', '2026-11-02T10:00:00.000Z');
+    insertPost(handle.db, joao.id, 'do joão', '2026-11-03T10:00:00.000Z');
+  });
+
+  afterEach(() => handle.close());
+
+  it('devolve o perfil com a contagem de posts do próprio usuário', () => {
+    expect(service.getProfile('maria')).toMatchObject({
+      handle: 'maria',
+      displayName: 'Maria Souza',
+      bio: 'Bio de maria',
+      postCount: 2,
+    });
+  });
+
+  it('lança NotFoundError para usuário inexistente', () => {
+    expect(() => service.getProfile('ninguem')).toThrow(NotFoundError);
+    expect(() => service.listPosts('ninguem', { page: 1, limit: 10 })).toThrow(NotFoundError);
+  });
+
+  it('lista apenas os posts do usuário, do mais novo ao mais antigo', () => {
+    const page = service.listPosts('maria', { page: 1, limit: 10 });
+
+    expect(page.items.map((post) => post.body)).toEqual(['da maria 2', 'da maria 1']);
+    expect(page.total).toBe(2);
+  });
+});
+```
+
+Run: `pnpm test:server`
+Esperado: FAIL (`Cannot find module './users.service'`).
+
+- [ ] **Passo 5: Implementar o serviço de usuários**
+
+Crie `src/server/services/users.service.ts`:
+
+```ts
+import type { Page, PostDto, UserDto } from '../../shared/dto';
+import type { PostsRepository } from '../db/posts.repository';
+import type { UserRow, UsersRepository } from '../db/users.repository';
+import { NotFoundError } from '../errors';
+import { offsetOf, toPage, type PageRequest } from '../pagination';
+import { toPostDto } from './mappers';
+
+export function createUsersService(deps: { users: UsersRepository; posts: PostsRepository }) {
+  function requireUser(handle: string): UserRow {
+    const user = deps.users.findByHandle(handle);
+    if (!user) {
+      throw new NotFoundError('user_not_found', 'Usuário não encontrado');
+    }
+    return user;
+  }
+
+  return {
+    getProfile(handle: string): UserDto {
+      const user = requireUser(handle);
+      return {
+        handle: user.handle,
+        displayName: user.displayName,
+        bio: user.bio,
+        createdAt: user.createdAt,
+        postCount: deps.posts.count({ userId: user.id }),
+      };
+    },
+
+    listPosts(handle: string, request: PageRequest): Page<PostDto> {
+      const user = requireUser(handle);
+      const rows = deps.posts.findPage({
+        userId: user.id,
+        limit: request.limit,
+        offset: offsetOf(request),
+      });
+      return toPage(rows.map(toPostDto), deps.posts.count({ userId: user.id }), request);
+    },
+  };
+}
+
+export type UsersService = ReturnType<typeof createUsersService>;
+```
+
+- [ ] **Passo 6: Verificar e commitar**
+
+```bash
+pnpm test:server && pnpm typecheck && pnpm lint && pnpm format:check
+git add src/server/services/users.service.ts src/server/services/users.service.spec.ts
+git commit -m "feat: adiciona serviço de usuários"
+```
+
+Esperado: todos os testes passam.
+
+### Tarefa 9: API HTTP (TDD)
+
+**Arquivos:**
+- Criar: `src/server/api/schemas.ts`, `src/server/api/error-handler.ts`, `src/server/api/router.ts`, `src/server/api/router.spec.ts`
+
+- [ ] **Passo 1: Testes falhando**
+
+Crie `src/server/api/router.spec.ts`:
+
+```ts
+import express from 'express';
+import request from 'supertest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { DbHandle } from '../db/database';
+import { createPostsRepository } from '../db/posts.repository';
+import { createUsersRepository } from '../db/users.repository';
+import { createLogger } from '../logger';
+import { createPostsService } from '../services/posts.service';
+import { createUsersService } from '../services/users.service';
+import { insertPost, insertUser } from '../testing/fixtures';
+import { createTestDb } from '../testing/test-db';
+import { createApiRouter } from './router';
+
+describe('API', () => {
+  let handle: DbHandle;
+  let app: express.Express;
+  let firstPostId: number;
+
+  beforeEach(() => {
+    handle = createTestDb();
+    const posts = createPostsRepository(handle.db);
+    const users = createUsersRepository(handle.db);
+    app = express();
+    app.use(
+      '/api',
+      createApiRouter(
+        { posts: createPostsService({ posts }), users: createUsersService({ users, posts }) },
+        createLogger('silent'),
+      ),
+    );
+
+    const maria = insertUser(handle.db, 'maria', 'Maria Souza');
+    firstPostId = insertPost(handle.db, maria.id, 'um', '2026-11-01T10:00:00.000Z').id;
+    insertPost(handle.db, maria.id, 'dois', '2026-11-02T10:00:00.000Z');
+    insertPost(handle.db, maria.id, 'tres', '2026-11-03T10:00:00.000Z');
+  });
+
+  afterEach(() => handle.close());
+
+  it('GET /api/health responde ok', async () => {
+    const res = await request(app).get('/api/health');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: 'ok' });
+  });
+
+  describe('GET /api/posts', () => {
+    it('lista com paginação', async () => {
+      const res = await request(app).get('/api/posts?page=1&limit=2');
+
+      expect(res.status).toBe(200);
+      expect(res.body.items.map((post: { body: string }) => post.body)).toEqual(['tres', 'dois']);
+      expect(res.body).toMatchObject({ page: 1, limit: 2, total: 3, totalPages: 2 });
+    });
+
+    it('usa página 1 e limite 10 por padrão', async () => {
+      const res = await request(app).get('/api/posts');
+
+      expect(res.body).toMatchObject({ page: 1, limit: 10 });
+    });
+
+    it.each(['page=0', 'page=abc', 'limit=0', 'limit=51'])(
+      'rejeita parâmetros inválidos (%s) com 400',
+      async (query) => {
+        const res = await request(app).get(`/api/posts?${query}`);
+
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('invalid_request');
+      },
+    );
+  });
+
+  describe('GET /api/posts/:id', () => {
+    it('devolve o post', async () => {
+      const res = await request(app).get(`/api/posts/${firstPostId}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ id: firstPostId, body: 'um' });
+    });
+
+    it('devolve 404 com formato de erro padrão', async () => {
+      const res = await request(app).get('/api/posts/999');
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: { code: 'post_not_found', message: 'Post não encontrado' } });
+    });
+
+    it('devolve 400 para id não numérico', async () => {
+      const res = await request(app).get('/api/posts/abc');
+
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe('usuários', () => {
+    it('GET /api/users/:handle devolve o perfil', async () => {
+      const res = await request(app).get('/api/users/maria');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ handle: 'maria', postCount: 3 });
+    });
+
+    it('GET /api/users/:handle devolve 404 para usuário inexistente', async () => {
+      const res = await request(app).get('/api/users/ninguem');
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('user_not_found');
+    });
+
+    it('GET /api/users/:handle rejeita handle inválido com 400', async () => {
+      const res = await request(app).get('/api/users/Handle%20Invalido');
+
+      expect(res.status).toBe(400);
+    });
+
+    it('GET /api/users/:handle/posts lista os posts do usuário', async () => {
+      const res = await request(app).get('/api/users/maria/posts?limit=2');
+
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(2);
+      expect(res.body.total).toBe(3);
+    });
+  });
+
+  it('rota desconhecida em /api devolve 404 em JSON', async () => {
+    const res = await request(app).get('/api/nada');
+
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('route_not_found');
+  });
+});
+```
+
+Run: `pnpm test:server`
+Esperado: FAIL (`Cannot find module './router'`).
+
+- [ ] **Passo 2: Schemas de entrada**
+
+Crie `src/server/api/schemas.ts`:
+
+```ts
+import { z } from 'zod';
+
+export const pageQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+
+export const idParams = z.object({
+  id: z.coerce.number().int().positive(),
+});
+
+export const handleParams = z.object({
+  handle: z.string().regex(/^[a-z0-9_]{2,20}$/),
+});
+```
+
+- [ ] **Passo 3: Tratamento de erros**
+
+Crie `src/server/api/error-handler.ts`:
+
+```ts
+import type { ErrorRequestHandler } from 'express';
+import { ZodError } from 'zod';
+import { AppError } from '../errors';
+import type { Logger } from '../logger';
+
+export function createErrorHandler(logger: Logger): ErrorRequestHandler {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- o Express exige 4 parâmetros
+  return (error, req, res, _next) => {
+    if (error instanceof AppError) {
+      res.status(error.status).json({ error: { code: error.code, message: error.message } });
+      return;
+    }
+    if (error instanceof ZodError) {
+      res.status(400).json({ error: { code: 'invalid_request', message: 'Parâmetros inválidos' } });
+      return;
+    }
+    logger.error({ err: error, path: req.path }, 'erro não tratado na API');
+    res.status(500).json({ error: { code: 'internal_error', message: 'Erro interno' } });
+  };
+}
+```
+
+- [ ] **Passo 4: Router**
+
+Crie `src/server/api/router.ts`:
+
+```ts
+import { Router } from 'express';
+import { NotFoundError } from '../errors';
+import type { Logger } from '../logger';
+import type { PostsService } from '../services/posts.service';
+import type { UsersService } from '../services/users.service';
+import { createErrorHandler } from './error-handler';
+import { handleParams, idParams, pageQuery } from './schemas';
+
+export interface ApiServices {
+  posts: PostsService;
+  users: UsersService;
+}
+
+export function createApiRouter(services: ApiServices, logger: Logger): Router {
+  const router = Router();
+
+  router.get('/health', (_req, res) => {
+    res.json({ status: 'ok' });
+  });
+
+  router.get('/posts', (req, res) => {
+    res.json(services.posts.list(pageQuery.parse(req.query)));
+  });
+
+  router.get('/posts/:id', (req, res) => {
+    const { id } = idParams.parse(req.params);
+    res.json(services.posts.get(id));
+  });
+
+  router.get('/users/:handle', (req, res) => {
+    const { handle } = handleParams.parse(req.params);
+    res.json(services.users.getProfile(handle));
+  });
+
+  router.get('/users/:handle/posts', (req, res) => {
+    const { handle } = handleParams.parse(req.params);
+    res.json(services.users.listPosts(handle, pageQuery.parse(req.query)));
+  });
+
+  router.use((_req, _res, next) => {
+    next(new NotFoundError('route_not_found', 'Rota não encontrada'));
+  });
+  router.use(createErrorHandler(logger));
+
+  return router;
+}
+```
+
+- [ ] **Passo 5: Ver passar**
+
+Run: `pnpm test:server`
+Esperado: todos os testes de API passam (Express 5 encaminha erros síncronos ao middleware de erro).
+
+- [ ] **Passo 6: Verificar e commitar**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm format:check
+git add src/server/api
+git commit -m "feat: adiciona API HTTP de posts e usuários com validação"
+```
+
+### Checkpoint da fatia C
+
+Pare. Peça autorização para push e PR da branch `feat/api`.
+
+---
+
+# Fatia D: SEO do servidor, seed e integração (branch `feat/server-wiring`)
+
+### Tarefa 10: Sitemap e robots (TDD)
+
+**Arquivos:**
+- Criar: `src/server/seo/seo.router.ts`, `src/server/seo/seo.router.spec.ts`
+
+- [ ] **Passo 1: Branch**
+
+```bash
+git switch main && git pull && git switch -c feat/server-wiring
+```
+
+- [ ] **Passo 2: Testes falhando**
+
+Crie `src/server/seo/seo.router.spec.ts`:
+
+```ts
+import express from 'express';
+import request from 'supertest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { DbHandle } from '../db/database';
+import { createPostsRepository } from '../db/posts.repository';
+import { createUsersRepository } from '../db/users.repository';
+import { insertPost, insertUser } from '../testing/fixtures';
+import { createTestDb } from '../testing/test-db';
+import { createSeoRouter } from './seo.router';
+
+describe('SEO router', () => {
+  let handle: DbHandle;
+  let app: express.Express;
+  let postId: number;
+
+  beforeEach(() => {
+    handle = createTestDb();
+    app = express();
+    app.use(
+      createSeoRouter({
+        siteUrl: 'https://exemplo.test',
+        posts: createPostsRepository(handle.db),
+        users: createUsersRepository(handle.db),
+      }),
+    );
+    const maria = insertUser(handle.db, 'maria');
+    postId = insertPost(handle.db, maria.id, 'olá', '2026-11-01T10:00:00.000Z').id;
+  });
+
+  afterEach(() => handle.close());
+
+  it('robots.txt aponta para o sitemap', async () => {
+    const res = await request(app).get('/robots.txt');
+
+    expect(res.status).toBe(200);
+    expect(res.type).toBe('text/plain');
+    expect(res.text).toContain('Sitemap: https://exemplo.test/sitemap.xml');
+  });
+
+  it('sitemap.xml lista páginas fixas, perfis e posts', async () => {
+    const res = await request(app).get('/sitemap.xml');
+
+    expect(res.status).toBe(200);
+    expect(res.type).toBe('application/xml');
+    expect(res.headers['cache-control']).toBe('public, max-age=3600');
+    expect(res.text).toContain('<loc>https://exemplo.test/</loc>');
+    expect(res.text).toContain('<loc>https://exemplo.test/feed</loc>');
+    expect(res.text).toContain('<loc>https://exemplo.test/u/maria</loc>');
+    expect(res.text).toContain(`<loc>https://exemplo.test/p/${postId}</loc>`);
+  });
+});
+```
+
+Run: `pnpm test:server`
+Esperado: FAIL (`Cannot find module './seo.router'`).
+
+- [ ] **Passo 3: Implementar**
+
+Crie `src/server/seo/seo.router.ts`:
+
+```ts
+import { Router } from 'express';
+import type { PostsRepository } from '../db/posts.repository';
+import type { UsersRepository } from '../db/users.repository';
+
+export interface SeoDeps {
+  siteUrl: string;
+  posts: PostsRepository;
+  users: UsersRepository;
+}
+
+const STATIC_PATHS = ['/', '/sobre', '/feed'];
+
+// Os valores interpolados no XML são seguros: handles seguem /^[a-z0-9_]+$/ e ids são inteiros.
+export function createSeoRouter({ siteUrl, posts, users }: SeoDeps): Router {
+  const router = Router();
+
+  router.get('/robots.txt', (_req, res) => {
+    res.type('text/plain').send(`User-agent: *\nAllow: /\n\nSitemap: ${siteUrl}/sitemap.xml\n`);
+  });
+
+  router.get('/sitemap.xml', (_req, res) => {
+    const paths = [
+      ...STATIC_PATHS,
+      ...users.listHandles().map((handle) => `/u/${handle}`),
+      ...posts.listIds().map((id) => `/p/${id}`),
+    ];
+    const entries = paths.map((path) => `  <url><loc>${siteUrl}${path}</loc></url>`).join('\n');
+    res
+      .set('Cache-Control', 'public, max-age=3600')
+      .type('application/xml')
+      .send(
+        `<?xml version="1.0" encoding="UTF-8"?>\n` +
+          `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries}\n</urlset>\n`,
+      );
+  });
+
+  return router;
+}
+```
+
+- [ ] **Passo 4: Ver passar e commitar**
+
+```bash
+pnpm test:server && pnpm typecheck && pnpm lint && pnpm format:check
+git add src/server/seo
+git commit -m "feat: adiciona sitemap.xml e robots.txt gerados no servidor"
+```
+
+### Tarefa 11: Seed de dados (TDD)
+
+**Arquivos:**
+- Criar: `src/server/db/seed.ts`, `src/server/db/seed.spec.ts`, `src/server/db/seed.run.ts`
+
+- [ ] **Passo 1: Testes falhando**
+
+Crie `src/server/db/seed.spec.ts`:
+
+```ts
+import { count } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createTestDb } from '../testing/test-db';
+import type { DbHandle } from './database';
+import { posts, users } from './schema';
+import { SEED_POST_COUNT, seed } from './seed';
+
+describe('seed', () => {
+  let handle: DbHandle;
+
+  beforeEach(() => {
+    handle = createTestDb();
+  });
+
+  afterEach(() => handle.close());
+
+  const total = (table: typeof users | typeof posts) =>
+    handle.db.select({ total: count() }).from(table).get()?.total;
+
+  it('popula usuários e posts em um banco vazio', () => {
+    expect(seed(handle.db)).toBe(true);
+    expect(total(users)).toBe(6);
+    expect(total(posts)).toBe(SEED_POST_COUNT);
+  });
+
+  it('é idempotente: não duplica dados na segunda execução', () => {
+    seed(handle.db);
+
+    expect(seed(handle.db)).toBe(false);
+    expect(total(posts)).toBe(SEED_POST_COUNT);
+  });
+
+  it('gera posts com até 280 caracteres e textos distintos', () => {
+    seed(handle.db);
+    const bodies = handle.db.select({ body: posts.body }).from(posts).all().map((r) => r.body);
+
+    expect(bodies.every((body) => body.length <= 280)).toBe(true);
+    expect(new Set(bodies).size).toBe(SEED_POST_COUNT);
+  });
+});
+```
+
+Run: `pnpm test:server`
+Esperado: FAIL (`Cannot find module './seed'`).
+
+- [ ] **Passo 2: Implementar**
+
+Crie `src/server/db/seed.ts`:
+
+```ts
+import { count } from 'drizzle-orm';
+import type { Db } from './database';
+import { posts, users } from './schema';
+
+export const SEED_POST_COUNT = 48;
+
+const SEED_USERS = [
+  { handle: 'maria', displayName: 'Maria Souza', bio: 'Desenvolvedora front-end. Café e acessibilidade.' },
+  { handle: 'joao', displayName: 'João Lima', bio: 'Back-end, bancos de dados e boas migrations.' },
+  { handle: 'ana', displayName: 'Ana Costa', bio: 'Engenharia de software e testes automatizados.' },
+  { handle: 'pedro', displayName: 'Pedro Alves', bio: 'DevOps curioso. Containers e pipelines.' },
+  { handle: 'lucia', displayName: 'Lúcia Rocha', bio: 'Design de produto e UX writing.' },
+  { handle: 'caio', displayName: 'Caio Mendes', bio: 'Estudando SSR, um commit de cada vez.' },
+];
+
+const TOPICS = [
+  'SSR',
+  'hidratação',
+  'cache HTTP',
+  'TypeScript',
+  'testes automatizados',
+  'Docker',
+  'SEO',
+  'acessibilidade',
+];
+
+const TEMPLATES = [
+  (topic: string) => `Hoje aprendi mais sobre ${topic}. Pequenos passos contam.`,
+  (topic: string) => `Alguém mais estudando ${topic}? Compartilhem dicas!`,
+  (topic: string) => `Anotação do dia: ${topic} fica mais simples quando se começa pelo básico.`,
+  (topic: string) => `Revisitando ${topic} com calma. Menos pressa, mais entendimento.`,
+];
+
+const FIRST_POST_AT = Date.UTC(2026, 10, 1, 12, 0, 0);
+const HOUR_MS = 3_600_000;
+
+function buildBody(index: number): string {
+  const topic = TOPICS[index % TOPICS.length];
+  const template = TEMPLATES[Math.floor(index / TOPICS.length) % TEMPLATES.length];
+  return `${template(topic)} (#${index + 1})`;
+}
+
+/** Popula o banco só se estiver vazio. Devolve `true` se inseriu dados. */
+export function seed(db: Db): boolean {
+  const existing = db.select({ total: count() }).from(users).get()?.total ?? 0;
+  if (existing > 0) {
+    return false;
+  }
+
+  db.transaction((tx) => {
+    const inserted = tx.insert(users).values(SEED_USERS).returning({ id: users.id }).all();
+    const rows = Array.from({ length: SEED_POST_COUNT }, (_, index) => ({
+      userId: inserted[index % inserted.length].id,
+      body: buildBody(index),
+      createdAt: new Date(FIRST_POST_AT + index * HOUR_MS).toISOString(),
+    }));
+    tx.insert(posts).values(rows).run();
+  });
+  return true;
+}
+```
+
+Crie `src/server/db/seed.run.ts`:
+
+```ts
+import { loadConfig } from '../config';
+import { createDb } from './database';
+import { seed } from './seed';
+
+const config = loadConfig();
+const { db, close } = createDb(config.DATABASE_PATH, config.MIGRATIONS_DIR);
+
+console.log(seed(db) ? 'Seed aplicado.' : 'O banco já possui dados; nada a fazer.');
+close();
+```
+
+- [ ] **Passo 3: Ver passar e testar o script**
+
+```bash
+pnpm test:server
+DATABASE_PATH=/tmp/seed-check.db pnpm db:seed && DATABASE_PATH=/tmp/seed-check.db pnpm db:seed
+rm -f /tmp/seed-check.db*
+```
+
+Esperado: testes passam; a 1ª execução imprime `Seed aplicado.` e a 2ª `O banco já possui dados; nada a fazer.`
+
+- [ ] **Passo 4: Commit**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm format:check
+git add src/server/db/seed.ts src/server/db/seed.spec.ts src/server/db/seed.run.ts
+git commit -m "feat: adiciona seed idempotente de usuários e posts"
+```
+
+### Tarefa 12: Montagem do Express e do entrypoint (TDD)
+
+**Arquivos:**
+- Criar: `src/server/app.ts`, `src/server/app.spec.ts`, `src/server/render-error-handler.ts`, `src/server/render-error-handler.spec.ts`
+- Modificar: `src/server.ts`, `angular.json`
+
+- [ ] **Passo 1: Testes falhando do handler de erro de renderização**
+
+Crie `src/server/render-error-handler.spec.ts`:
+
+```ts
+import express from 'express';
+import request from 'supertest';
+import { describe, expect, it } from 'vitest';
+import { createLogger } from './logger';
+import { createRenderErrorHandler } from './render-error-handler';
+
+describe('createRenderErrorHandler', () => {
+  it('responde 500 sem vazar detalhes do erro', async () => {
+    const app = express();
+    app.get('/quebra', () => {
+      throw new Error('segredo interno');
+    });
+    app.use(createRenderErrorHandler(createLogger('silent')));
+
+    const res = await request(app).get('/quebra');
+
+    expect(res.status).toBe(500);
+    expect(res.text).toBe('Erro interno do servidor');
+    expect(res.text).not.toContain('segredo');
+  });
+});
+```
+
+Run: `pnpm test:server`
+Esperado: FAIL (`Cannot find module './render-error-handler'`).
+
+- [ ] **Passo 2: Implementar o handler**
+
+Crie `src/server/render-error-handler.ts`:
+
+```ts
+import type { ErrorRequestHandler } from 'express';
+import type { Logger } from './logger';
+
+export function createRenderErrorHandler(logger: Logger): ErrorRequestHandler {
+  return (error, req, res, next) => {
+    logger.error({ err: error, path: req.path }, 'falha ao renderizar a página');
+    if (res.headersSent) {
+      next(error);
+      return;
+    }
+    res.status(500).type('text/plain').send('Erro interno do servidor');
+  };
+}
+```
+
+- [ ] **Passo 3: Teste falhando do app**
+
+Crie `src/server/app.spec.ts`:
+
+```ts
+import request from 'supertest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createApp } from './app';
+import { loadConfig } from './config';
+import type { DbHandle } from './db/database';
+import { createLogger } from './logger';
+import { createTestDb } from './testing/test-db';
+
+describe('createApp', () => {
+  let handle: DbHandle;
+
+  beforeEach(() => {
+    handle = createTestDb();
+  });
+
+  afterEach(() => handle.close());
+
+  const build = () =>
+    createApp({ config: loadConfig({}), db: handle.db, logger: createLogger('silent') });
+
+  it('expõe a API em /api', async () => {
+    const res = await request(build()).get('/api/health');
+
+    expect(res.status).toBe(200);
+  });
+
+  it('expõe robots.txt e não revela o framework', async () => {
+    const res = await request(build()).get('/robots.txt');
+
+    expect(res.status).toBe(200);
+    expect(res.headers['x-powered-by']).toBeUndefined();
+  });
+});
+```
+
+Run: `pnpm test:server`
+Esperado: FAIL (`Cannot find module './app'`).
+
+- [ ] **Passo 4: Implementar `createApp`**
+
+Crie `src/server/app.ts`:
+
+```ts
+import express, { type Express } from 'express';
+import { createApiRouter } from './api/router';
+import type { Config } from './config';
+import type { Db } from './db/database';
+import { createPostsRepository } from './db/posts.repository';
+import { createUsersRepository } from './db/users.repository';
+import type { Logger } from './logger';
+import { createSeoRouter } from './seo/seo.router';
+import { createPostsService } from './services/posts.service';
+import { createUsersService } from './services/users.service';
+
+export interface AppDeps {
+  config: Config;
+  db: Db;
+  logger: Logger;
+}
+
+/** Monta o Express com API, sitemap e robots. Não chama `listen` nem conhece o Angular. */
+export function createApp({ config, db, logger }: AppDeps): Express {
+  const posts = createPostsRepository(db);
+  const users = createUsersRepository(db);
+
+  const app = express();
+  app.disable('x-powered-by');
+  app.use(
+    '/api',
+    createApiRouter(
+      { posts: createPostsService({ posts }), users: createUsersService({ users, posts }) },
+      logger,
+    ),
+  );
+  app.use(createSeoRouter({ siteUrl: config.SITE_URL, posts, users }));
+  return app;
+}
+```
+
+Run: `pnpm test:server`
+Esperado: todos passam.
+
+- [ ] **Passo 5: Entrypoint**
+
+Substitua todo o conteúdo de `src/server.ts` por:
+
+```ts
+import {
+  AngularNodeAppEngine,
+  createNodeRequestHandler,
+  isMainModule,
+  writeResponseToNodeResponse,
+} from '@angular/ssr/node';
+import express from 'express';
+import { join } from 'node:path';
+import { createApp } from './server/app';
+import { loadConfig } from './server/config';
+import { createDb } from './server/db/database';
+import { createLogger } from './server/logger';
+import { createRenderErrorHandler } from './server/render-error-handler';
+
+const browserDistFolder = join(import.meta.dirname, '../browser');
+
+const config = loadConfig();
+const logger = createLogger(config.LOG_LEVEL);
+const { db } = createDb(config.DATABASE_PATH, config.MIGRATIONS_DIR);
+
+const app = createApp({ config, db, logger });
+const angularApp = new AngularNodeAppEngine();
+
+/** Arquivos estáticos do build do navegador. */
+app.use(
+  express.static(browserDistFolder, {
+    maxAge: '1y',
+    index: false,
+    redirect: false,
+  }),
+);
+
+/** Qualquer outra requisição é renderizada pelo Angular. */
+app.use((req, res, next) => {
+  angularApp
+    .handle(req, { siteUrl: config.SITE_URL })
+    .then((response) => (response ? writeResponseToNodeResponse(response, res) : next()))
+    .catch(next);
+});
+
+app.use(createRenderErrorHandler(logger));
+
+if (isMainModule(import.meta.url) || process.env['pm_id']) {
+  app.listen(config.PORT, (error) => {
+    if (error) {
+      throw error;
+    }
+    logger.info(`Servidor ouvindo em http://localhost:${config.PORT}`);
+  });
+}
+
+/** Usado pelo Angular CLI (dev server e build) e por funções serverless. */
+export const reqHandler = createNodeRequestHandler(app);
+```
+
+- [ ] **Passo 6: Liberar os hosts locais no build**
+
+No `angular.json`, em `architect.build.options.security`, troque `"allowedHosts": []` por:
+
+```json
+"allowedHosts": ["localhost", "127.0.0.1"]
+```
+
+(Em produção, `NG_ALLOWED_HOSTS` adiciona o domínio público.)
+
+- [ ] **Passo 7: Verificação manual ponta a ponta**
+
+```bash
+pnpm build
+rm -f data/dev.db*
+DATABASE_PATH=data/dev.db pnpm db:seed
+DATABASE_PATH=data/dev.db PORT=4123 node dist/ssr-microblog/server/server.mjs &
+sleep 2
+curl -s "localhost:4123/api/posts?limit=2"; echo
+curl -s localhost:4123/sitemap.xml | head -5
+curl -s -o /dev/null -w "pagina:%{http_code}\n" localhost:4123/
+kill %1
+```
+
+Esperado: JSON com 2 posts (o mais novo termina em `(#48)`), sitemap com `<loc>`, e a página inicial com `200`.
+
+Se o build falhar com erro do `pino` (bundle), adicione `"pino"` a `externalDependencies` no `angular.json`, rode de novo e registre o motivo na mensagem do commit.
+
+- [ ] **Passo 8: Verificar tudo e commitar**
+
+```bash
+pnpm test:server && pnpm test --no-watch && pnpm typecheck && pnpm lint && pnpm format:check
+git add src/server.ts src/server/app.ts src/server/app.spec.ts src/server/render-error-handler.ts src/server/render-error-handler.spec.ts angular.json
+git commit -m "feat: integra API, sitemap e SSR no mesmo servidor Express"
+```
+
+### Checkpoint da fatia D
+
+Pare. Peça autorização para push e PR da branch `feat/server-wiring`.
+
+---
+
+# Fatia E: Base da interface (branch `feat/ui-base`)
+
+### Tarefa 13: Serviços do núcleo Angular (TDD)
+
+**Arquivos:**
+- Criar: `src/app/core/site-url.ts`, `src/app/core/seo.service.ts`, `src/app/core/seo.service.spec.ts`, `src/app/core/api.service.ts`, `src/app/core/api.service.spec.ts`, `src/app/core/page-param.ts`, `src/app/core/page-param.spec.ts`, `src/app/core/text.ts`, `src/app/core/text.spec.ts`, `src/app/core/not-found.ts`, `src/app/core/not-found.spec.ts`
+- Modificar: `src/app/app.config.ts`
+
+- [ ] **Passo 1: Branch**
+
+```bash
+git switch main && git pull && git switch -c feat/ui-base
+```
+
+- [ ] **Passo 2: Testes falhando (SEO, API, page-param, texto, not-found)**
+
+Crie `src/app/core/seo.service.spec.ts`:
+
+```ts
+import { DOCUMENT } from '@angular/common';
+import { TestBed } from '@angular/core/testing';
+import { SITE_URL } from './site-url';
+import { SeoService } from './seo.service';
+
+describe('SeoService', () => {
+  let seo: SeoService;
+  let doc: Document;
+
+  const meta = (attr: 'name' | 'property', key: string) =>
+    doc.head.querySelector(`meta[${attr}="${key}"]`)?.getAttribute('content');
+  const canonical = () => doc.head.querySelector('link[rel="canonical"]')?.getAttribute('href');
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [{ provide: SITE_URL, useValue: 'https://exemplo.test' }],
+    });
+    seo = TestBed.inject(SeoService);
+    doc = TestBed.inject(DOCUMENT);
+  });
+
+  it('define título, descrição, Open Graph e canonical', () => {
+    seo.set({ title: 'Feed', description: 'Últimos posts', path: '/feed' });
+
+    expect(doc.title).toBe('Feed · Microblog');
+    expect(meta('name', 'description')).toBe('Últimos posts');
+    expect(meta('property', 'og:title')).toBe('Feed · Microblog');
+    expect(meta('property', 'og:description')).toBe('Últimos posts');
+    expect(meta('property', 'og:type')).toBe('website');
+    expect(meta('property', 'og:url')).toBe('https://exemplo.test/feed');
+    expect(meta('name', 'robots')).toBe('index,follow');
+    expect(canonical()).toBe('https://exemplo.test/feed');
+  });
+
+  it('usa og:type article quando informado', () => {
+    seo.set({ title: 'Post', description: 'x', path: '/p/1', type: 'article' });
+
+    expect(meta('property', 'og:type')).toBe('article');
+  });
+
+  it('atualiza o canonical existente em vez de duplicar', () => {
+    seo.set({ title: 'A', description: 'a', path: '/a' });
+    seo.set({ title: 'B', description: 'b', path: '/b' });
+
+    expect(doc.head.querySelectorAll('link[rel="canonical"]')).toHaveLength(1);
+    expect(canonical()).toBe('https://exemplo.test/b');
+  });
+
+  it('sem path remove canonical e og:url; noindex marca robots', () => {
+    seo.set({ title: 'A', description: 'a', path: '/a' });
+    seo.set({ title: 'Não encontrado', description: 'x', noindex: true });
+
+    expect(canonical()).toBeUndefined();
+    expect(meta('property', 'og:url')).toBeUndefined();
+    expect(meta('name', 'robots')).toBe('noindex');
+  });
+});
+```
+
+Crie `src/app/core/api.service.spec.ts`:
+
+```ts
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { TestBed } from '@angular/core/testing';
+import { ApiService } from './api.service';
+
+describe('ApiService', () => {
+  let api: ApiService;
+  let http: HttpTestingController;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    });
+    api = TestBed.inject(ApiService);
+    http = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => http.verify());
+
+  it('lista posts com a página na query', () => {
+    api.listPosts(2).subscribe();
+
+    const req = http.expectOne((r) => r.url === '/api/posts' && r.params.get('page') === '2');
+    req.flush({ items: [], page: 2, limit: 10, total: 0, totalPages: 1 });
+  });
+
+  it('busca um post por id', () => {
+    api.getPost(7).subscribe();
+
+    http.expectOne('/api/posts/7').flush({});
+  });
+
+  it('busca o perfil e os posts do usuário', () => {
+    api.getUser('maria').subscribe();
+    api.listUserPosts('maria', 3).subscribe();
+
+    http.expectOne('/api/users/maria').flush({});
+    http
+      .expectOne((r) => r.url === '/api/users/maria/posts' && r.params.get('page') === '3')
+      .flush({});
+  });
+});
+```
+
+Crie `src/app/core/page-param.spec.ts`:
+
+```ts
+import { ActivatedRouteSnapshot, convertToParamMap } from '@angular/router';
+import { pageFrom } from './page-param';
+
+const routeWith = (query: Record<string, string>) =>
+  ({ queryParamMap: convertToParamMap(query) }) as ActivatedRouteSnapshot;
+
+describe('pageFrom', () => {
+  it('usa a página informada na query', () => {
+    expect(pageFrom(routeWith({ page: '3' }))).toBe(3);
+  });
+
+  it.each([{}, { page: '0' }, { page: '-2' }, { page: 'abc' }, { page: '1.5' }])(
+    'cai para 1 quando o valor é ausente ou inválido (%j)',
+    (query) => {
+      expect(pageFrom(routeWith(query))).toBe(1);
+    },
+  );
+});
+```
+
+Crie `src/app/core/text.spec.ts`:
+
+```ts
+import { excerpt } from './text';
+
+describe('excerpt', () => {
+  it('mantém textos curtos', () => {
+    expect(excerpt('curto', 10)).toBe('curto');
+  });
+
+  it('corta textos longos e adiciona reticências', () => {
+    expect(excerpt('abcdefghij', 5)).toBe('abcd…');
+  });
+});
+```
+
+Crie `src/app/core/not-found.spec.ts`:
+
+```ts
+import { HttpErrorResponse } from '@angular/common/http';
+import { RESPONSE_INIT } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { firstValueFrom, of, throwError } from 'rxjs';
+import { orNotFound } from './not-found';
+
+describe('orNotFound', () => {
+  const run = <T>(source$: ReturnType<typeof of<T>> | ReturnType<typeof throwError>) =>
+    TestBed.runInInjectionContext(() => firstValueFrom(source$.pipe(orNotFound())));
+
+  it('mantém o valor quando não há erro', async () => {
+    TestBed.configureTestingModule({ providers: [{ provide: RESPONSE_INIT, useValue: {} }] });
+
+    expect(await run(of('ok'))).toBe('ok');
+  });
+
+  it('converte 404 e 400 em null e marca status 404 sem cache na resposta', async () => {
+    const init: ResponseInit = {};
+    TestBed.configureTestingModule({ providers: [{ provide: RESPONSE_INIT, useValue: init }] });
+
+    expect(await run(throwError(() => new HttpErrorResponse({ status: 404 })))).toBeNull();
+    expect(await run(throwError(() => new HttpErrorResponse({ status: 400 })))).toBeNull();
+    expect(init.status).toBe(404);
+    expect(new Headers(init.headers).get('Cache-Control')).toBe('no-store');
+  });
+
+  it('funciona no navegador, onde RESPONSE_INIT é null', async () => {
+    TestBed.configureTestingModule({ providers: [{ provide: RESPONSE_INIT, useValue: null }] });
+
+    expect(await run(throwError(() => new HttpErrorResponse({ status: 404 })))).toBeNull();
+  });
+
+  it('propaga erros que não são 404/400', async () => {
+    TestBed.configureTestingModule({ providers: [{ provide: RESPONSE_INIT, useValue: {} }] });
+
+    await expect(run(throwError(() => new HttpErrorResponse({ status: 500 })))).rejects.toBeInstanceOf(
+      HttpErrorResponse,
+    );
+  });
+});
+```
+
+Run: `pnpm test --no-watch`
+Esperado: FAIL (módulos inexistentes).
+
+- [ ] **Passo 3: Implementar o núcleo**
+
+Crie `src/app/core/site-url.ts`:
+
+```ts
+import { DOCUMENT } from '@angular/common';
+import { InjectionToken, REQUEST_CONTEXT, inject } from '@angular/core';
+
+/**
+ * URL pública do site. No servidor vem do contexto da requisição (`SITE_URL` do ambiente);
+ * no navegador, da origem atual.
+ */
+export const SITE_URL = new InjectionToken<string>('SITE_URL', {
+  providedIn: 'root',
+  factory: () => {
+    const context = inject(REQUEST_CONTEXT, { optional: true }) as { siteUrl?: string } | null;
+    return context?.siteUrl ?? inject(DOCUMENT).location.origin;
+  },
+});
+```
+
+Crie `src/app/core/seo.service.ts`:
+
+```ts
+import { DOCUMENT } from '@angular/common';
+import { Injectable, inject } from '@angular/core';
+import { Meta, Title } from '@angular/platform-browser';
+import { SITE_URL } from './site-url';
+
+export interface PageMeta {
+  title: string;
+  description: string;
+  /** Caminho público da página. Sem ele, não há canonical nem og:url. */
+  path?: string;
+  type?: 'website' | 'article';
+  noindex?: boolean;
+}
+
+@Injectable({ providedIn: 'root' })
+export class SeoService {
+  private readonly titleService = inject(Title);
+  private readonly meta = inject(Meta);
+  private readonly document = inject(DOCUMENT);
+  private readonly siteUrl = inject(SITE_URL);
+
+  set({ title, description, path, type = 'website', noindex = false }: PageMeta): void {
+    const fullTitle = `${title} · Microblog`;
+    this.titleService.setTitle(fullTitle);
+    this.meta.updateTag({ name: 'description', content: description });
+    this.meta.updateTag({ name: 'robots', content: noindex ? 'noindex' : 'index,follow' });
+    this.meta.updateTag({ property: 'og:title', content: fullTitle });
+    this.meta.updateTag({ property: 'og:description', content: description });
+    this.meta.updateTag({ property: 'og:type', content: type });
+
+    if (path === undefined) {
+      this.meta.removeTag('property="og:url"');
+      this.removeCanonical();
+      return;
+    }
+    const url = `${this.siteUrl}${path}`;
+    this.meta.updateTag({ property: 'og:url', content: url });
+    this.setCanonical(url);
+  }
+
+  private setCanonical(url: string): void {
+    let link = this.document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    if (!link) {
+      link = this.document.createElement('link');
+      link.rel = 'canonical';
+      link.href = url;
+      this.document.head.appendChild(link);
+      return;
+    }
+    link.href = url;
+  }
+
+  private removeCanonical(): void {
+    this.document.head.querySelector('link[rel="canonical"]')?.remove();
+  }
+}
+```
+
+Crie `src/app/core/api.service.ts`:
+
+```ts
+import { HttpClient } from '@angular/common/http';
+import { Injectable, inject } from '@angular/core';
+import type { Page, PostDto, UserDto } from '../../shared/dto';
+
+@Injectable({ providedIn: 'root' })
+export class ApiService {
+  private readonly http = inject(HttpClient);
+
+  listPosts(page: number) {
+    return this.http.get<Page<PostDto>>('/api/posts', { params: { page } });
+  }
+
+  getPost(id: number) {
+    return this.http.get<PostDto>(`/api/posts/${id}`);
+  }
+
+  getUser(handle: string) {
+    return this.http.get<UserDto>(`/api/users/${encodeURIComponent(handle)}`);
+  }
+
+  listUserPosts(handle: string, page: number) {
+    return this.http.get<Page<PostDto>>(`/api/users/${encodeURIComponent(handle)}/posts`, {
+      params: { page },
+    });
+  }
+}
+```
+
+Crie `src/app/core/page-param.ts`:
+
+```ts
+import type { ActivatedRouteSnapshot } from '@angular/router';
+
+/** Lê `?page=` como inteiro >= 1; qualquer valor inválido vira 1. */
+export function pageFrom(route: ActivatedRouteSnapshot): number {
+  const value = Number(route.queryParamMap.get('page'));
+  return Number.isInteger(value) && value >= 1 ? value : 1;
+}
+```
+
+Crie `src/app/core/text.ts`:
+
+```ts
+export function excerpt(text: string, maxLength: number): string {
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}…`;
+}
+```
+
+Crie `src/app/core/not-found.ts`:
+
+```ts
+import { HttpErrorResponse } from '@angular/common/http';
+import { RESPONSE_INIT, inject } from '@angular/core';
+import { catchError, of, throwError, type OperatorFunction } from 'rxjs';
+
+/**
+ * Para usar em resolvers: transforma 404/400 da API em `null` e, no servidor, marca a resposta
+ * HTTP como 404 sem cache. Outros erros continuam sendo propagados.
+ * Precisa ser chamado em contexto de injeção.
+ */
+export function orNotFound<T>(): OperatorFunction<T, T | null> {
+  const responseInit = inject(RESPONSE_INIT, { optional: true });
+
+  return catchError((error: unknown) => {
+    if (error instanceof HttpErrorResponse && (error.status === 404 || error.status === 400)) {
+      if (responseInit) {
+        responseInit.status = 404;
+        responseInit.headers = { 'Cache-Control': 'no-store' };
+      }
+      return of(null);
+    }
+    return throwError(() => error);
+  });
+}
+```
+
+- [ ] **Passo 4: Configuração da aplicação**
+
+Substitua `src/app/app.config.ts` por:
+
+```ts
+import { provideHttpClient, withFetch } from '@angular/common/http';
+import { ApplicationConfig, provideBrowserGlobalErrorListeners } from '@angular/core';
+import { provideClientHydration } from '@angular/platform-browser';
+import { provideRouter, withComponentInputBinding } from '@angular/router';
+import { routes } from './app.routes';
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideBrowserGlobalErrorListeners(),
+    provideRouter(routes, withComponentInputBinding()),
+    provideHttpClient(withFetch()),
+    // Hidratação incremental já vem habilitada por padrão no Angular 22.
+    provideClientHydration(),
+  ],
+};
+```
+
+- [ ] **Passo 5: Ver passar**
+
+Run: `pnpm test --no-watch`
+Esperado: todos os testes de `core` passam (o `App` spec continua passando).
+
+Se o teste `orNotFound` falhar na tipagem do helper `run`, simplifique o tipo do parâmetro para `Observable<T>` (`import type { Observable } from 'rxjs'`), mantendo o comportamento testado.
+
+- [ ] **Passo 6: Commit**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm format:check
+git add src/app/core src/app/app.config.ts
+git commit -m "feat: adiciona serviços de SEO, API e utilitários do núcleo Angular"
+```
+
+### Tarefa 14: Componentes reutilizáveis (TDD)
+
+**Arquivos:**
+- Criar: `src/app/shared-ui/post-card.ts`, `src/app/shared-ui/post-card.spec.ts`, `src/app/shared-ui/pagination.ts`, `src/app/shared-ui/pagination.spec.ts`
+
+- [ ] **Passo 1: Testes falhando**
+
+Crie `src/app/shared-ui/post-card.spec.ts`:
+
+```ts
+import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
+import type { PostDto } from '../../shared/dto';
+import { PostCard } from './post-card';
+
+describe('PostCard', () => {
+  const post: PostDto = {
+    id: 5,
+    body: 'Olá mundo',
+    createdAt: '2026-11-23T12:00:00.000Z',
+    author: { handle: 'maria', displayName: 'Maria Souza' },
+  };
+
+  async function render() {
+    TestBed.configureTestingModule({ providers: [provideRouter([])] });
+    const fixture = TestBed.createComponent(PostCard);
+    fixture.componentRef.setInput('post', post);
+    await fixture.whenStable();
+    return fixture.nativeElement as HTMLElement;
+  }
+
+  it('mostra texto, autor com link para o perfil e link para o post', async () => {
+    const el = await render();
+
+    expect(el.textContent).toContain('Olá mundo');
+    expect(el.querySelector('a.author')?.getAttribute('href')).toBe('/u/maria');
+    expect(el.querySelector('a.when')?.getAttribute('href')).toBe('/p/5');
+  });
+
+  it('mostra a data sempre em UTC, igual no servidor e no navegador', async () => {
+    const el = await render();
+
+    expect(el.querySelector('time')?.textContent).toContain('23/11/2026 12:00 UTC');
+    expect(el.querySelector('time')?.getAttribute('datetime')).toBe('2026-11-23T12:00:00.000Z');
+  });
+});
+```
+
+Crie `src/app/shared-ui/pagination.spec.ts`:
+
+```ts
+import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
+import { Pagination } from './pagination';
+
+describe('Pagination', () => {
+  async function render(page: number, totalPages: number) {
+    TestBed.configureTestingModule({ providers: [provideRouter([])] });
+    const fixture = TestBed.createComponent(Pagination);
+    fixture.componentRef.setInput('page', page);
+    fixture.componentRef.setInput('totalPages', totalPages);
+    await fixture.whenStable();
+    return fixture.nativeElement as HTMLElement;
+  }
+
+  const linkTexts = (el: HTMLElement) =>
+    Array.from(el.querySelectorAll('a')).map((a) => a.textContent?.trim());
+
+  it('não renderiza nada com uma única página', async () => {
+    expect((await render(1, 1)).querySelector('nav')).toBeNull();
+  });
+
+  it('na primeira página só tem "Próxima"', async () => {
+    const el = await render(1, 3);
+
+    expect(linkTexts(el)).toEqual(['Próxima']);
+    expect(el.querySelector('a')?.getAttribute('href')).toContain('page=2');
+  });
+
+  it('no meio tem "Anterior" e "Próxima"', async () => {
+    const el = await render(2, 3);
+
+    expect(linkTexts(el)).toEqual(['Anterior', 'Próxima']);
+    expect(el.textContent).toContain('Página 2 de 3');
+  });
+
+  it('na última página só tem "Anterior"', async () => {
+    expect(linkTexts(await render(3, 3))).toEqual(['Anterior']);
+  });
+});
+```
+
+Run: `pnpm test --no-watch`
+Esperado: FAIL (módulos inexistentes).
+
+- [ ] **Passo 2: Implementar**
+
+Crie `src/app/shared-ui/post-card.ts`:
+
+```ts
+import { DatePipe } from '@angular/common';
+import { Component, input } from '@angular/core';
+import { RouterLink } from '@angular/router';
+import type { PostDto } from '../../shared/dto';
+
+@Component({
+  selector: 'app-post-card',
+  imports: [RouterLink, DatePipe],
+  template: `
+    <article class="post-card">
+      <header>
+        <a class="author" [routerLink]="['/u', post().author.handle]">{{
+          post().author.displayName
+        }}</a>
+        <span class="handle">&#64;{{ post().author.handle }}</span>
+      </header>
+      <p class="body">{{ post().body }}</p>
+      <a class="when" [routerLink]="['/p', post().id]">
+        <time [attr.datetime]="post().createdAt">{{
+          post().createdAt | date: "dd/MM/yyyy HH:mm 'UTC'" : 'UTC'
+        }}</time>
+      </a>
+    </article>
+  `,
+})
+export class PostCard {
+  readonly post = input.required<PostDto>();
+}
+```
+
+Crie `src/app/shared-ui/pagination.ts`:
+
+```ts
+import { Component, input } from '@angular/core';
+import { RouterLink } from '@angular/router';
+
+@Component({
+  selector: 'app-pagination',
+  imports: [RouterLink],
+  template: `
+    @if (totalPages() > 1) {
+      <nav class="pagination" aria-label="Paginação">
+        @if (page() > 1) {
+          <a [routerLink]="[]" [queryParams]="{ page: page() - 1 }">Anterior</a>
+        }
+        <span>Página {{ page() }} de {{ totalPages() }}</span>
+        @if (page() < totalPages()) {
+          <a [routerLink]="[]" [queryParams]="{ page: page() + 1 }">Próxima</a>
+        }
+      </nav>
+    }
+  `,
+})
+export class Pagination {
+  readonly page = input.required<number>();
+  readonly totalPages = input.required<number>();
+}
+```
+
+- [ ] **Passo 3: Ver passar e commitar**
+
+```bash
+pnpm test --no-watch && pnpm typecheck && pnpm lint && pnpm format:check
+git add src/app/shared-ui
+git commit -m "feat: adiciona componentes PostCard e Pagination"
+```
+
+### Tarefa 15: Layout, páginas estáticas e modos de renderização
+
+**Arquivos:**
+- Criar: `src/app/features/home/home.page.ts`, `src/app/features/about/about.page.ts`, `src/app/features/not-found/not-found.page.ts`
+- Modificar: `src/app/app.ts`, `src/app/app.html`, `src/app/app.routes.ts`, `src/app/app.routes.server.ts`, `src/styles.css`
+
+- [ ] **Passo 1: Shell com navegação**
+
+Substitua `src/app/app.ts` por:
+
+```ts
+import { Component } from '@angular/core';
+import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+
+@Component({
+  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  selector: 'app-root',
+  styleUrl: './app.css',
+  templateUrl: './app.html',
+})
+export class App {}
+```
+
+Substitua `src/app/app.html` por:
+
+```html
+<a class="skip-link" href="#main">Pular para o conteúdo</a>
+<header class="site-header">
+  <a routerLink="/" class="brand">Microblog</a>
+  <nav aria-label="Principal">
+    <a routerLink="/feed" routerLinkActive="active">Feed</a>
+    <a routerLink="/sobre" routerLinkActive="active">Sobre</a>
+  </nav>
+</header>
+<main id="main"><router-outlet /></main>
+<footer class="site-footer">Projeto de estudo de SSR com Angular.</footer>
+```
+
+- [ ] **Passo 2: Páginas estáticas e 404**
+
+Crie `src/app/features/home/home.page.ts`:
+
+```ts
+import { Component, inject } from '@angular/core';
+import { RouterLink } from '@angular/router';
+import { SeoService } from '../../core/seo.service';
+
+@Component({
+  selector: 'app-home-page',
+  imports: [RouterLink],
+  template: `
+    <section class="hero">
+      <h1>Microblog</h1>
+      <p>Pensamentos curtos, renderizados no servidor.</p>
+      <a class="button" routerLink="/feed">Ver o feed</a>
+    </section>
+  `,
+})
+export class HomePage {
+  constructor() {
+    // Página prerenderizada: sem path, pois a URL pública só é conhecida em runtime.
+    inject(SeoService).set({
+      title: 'Início',
+      description: 'Microblog de estudo com Angular e renderização no servidor.',
+    });
+  }
+}
+```
+
+Crie `src/app/features/about/about.page.ts`:
+
+```ts
+import { Component, inject } from '@angular/core';
+import { SeoService } from '../../core/seo.service';
+
+@Component({
+  selector: 'app-about-page',
+  template: `
+    <h1>Sobre</h1>
+    <p>
+      Este projeto existe para estudar renderização no servidor (SSR) com Angular: páginas
+      estáticas geradas no build, páginas dinâmicas renderizadas a cada requisição, SEO, cache HTTP
+      e hidratação incremental.
+    </p>
+  `,
+})
+export class AboutPage {
+  constructor() {
+    inject(SeoService).set({
+      title: 'Sobre',
+      description: 'Sobre o projeto de estudo de SSR com Angular.',
+    });
+  }
+}
+```
+
+Crie `src/app/features/not-found/not-found.page.ts`:
+
+```ts
+import { Component, inject } from '@angular/core';
+import { RouterLink } from '@angular/router';
+import { SeoService } from '../../core/seo.service';
+
+@Component({
+  selector: 'app-not-found-page',
+  imports: [RouterLink],
+  template: `
+    <h1>Página não encontrada</h1>
+    <p>O endereço que você acessou não existe.</p>
+    <a routerLink="/feed">Voltar ao feed</a>
+  `,
+})
+export class NotFoundPage {
+  constructor() {
+    inject(SeoService).set({
+      title: 'Página não encontrada',
+      description: 'Página não encontrada.',
+      noindex: true,
+    });
+  }
+}
+```
+
+- [ ] **Passo 3: Rotas do Angular (feed, perfil e post entram na tarefa 16)**
+
+Substitua `src/app/app.routes.ts` por:
+
+```ts
+import { Routes } from '@angular/router';
+
+export const routes: Routes = [
+  {
+    path: '',
+    pathMatch: 'full',
+    loadComponent: () => import('./features/home/home.page').then((m) => m.HomePage),
+  },
+  {
+    path: 'sobre',
+    loadComponent: () => import('./features/about/about.page').then((m) => m.AboutPage),
+  },
+  {
+    path: '**',
+    loadComponent: () =>
+      import('./features/not-found/not-found.page').then((m) => m.NotFoundPage),
+  },
+];
+```
+
+- [ ] **Passo 4: Modo de renderização por rota**
+
+Substitua `src/app/app.routes.server.ts` por:
+
+```ts
+import { RenderMode, ServerRoute } from '@angular/ssr';
+
+const STATIC_CACHE = { 'Cache-Control': 'public, max-age=3600' };
+
+export const serverRoutes: ServerRoute[] = [
+  { path: '', renderMode: RenderMode.Prerender, headers: STATIC_CACHE },
+  { path: 'sobre', renderMode: RenderMode.Prerender, headers: STATIC_CACHE },
+  {
+    path: '**',
+    renderMode: RenderMode.Server,
+    status: 404,
+    headers: { 'Cache-Control': 'no-store' },
+  },
+];
+```
+
+- [ ] **Passo 5: Estilos globais mínimos**
+
+Substitua `src/styles.css` por:
+
+```css
+:root {
+  --bg: #fafafa;
+  --fg: #1c1c1e;
+  --muted: #5c5c66;
+  --accent: #1a56db;
+  --card: #fff;
+  --border: #e3e3e8;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121214;
+    --fg: #ececf0;
+    --muted: #a0a0ad;
+    --accent: #8ab4ff;
+    --card: #1c1c20;
+    --border: #2e2e35;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--fg);
+}
+a {
+  color: var(--accent);
+}
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+.skip-link {
+  position: absolute;
+  left: -999px;
+}
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+}
+.site-header,
+.site-footer {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.site-header nav {
+  display: flex;
+  gap: 1rem;
+}
+.site-header a.active {
+  font-weight: 700;
+}
+.brand {
+  font-weight: 800;
+  text-decoration: none;
+}
+.site-footer {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.button {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  background: var(--accent);
+  color: var(--bg);
+  text-decoration: none;
+}
+.post-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  margin: 0 0 0.75rem;
+}
+.post-card header {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.post-card .handle,
+.post-card .when,
+.profile .handle {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.post-card .body {
+  margin: 0.5rem 0;
+  white-space: pre-wrap;
+}
+.pagination {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  align-items: center;
+  margin: 1rem 0;
+}
+.placeholder {
+  color: var(--muted);
+}
+```
+
+- [ ] **Passo 6: Verificar build, prerender e página 404**
+
+```bash
+pnpm test --no-watch && pnpm build
+rm -f data/dev.db* && DATABASE_PATH=data/dev.db pnpm db:seed
+DATABASE_PATH=data/dev.db PORT=4123 node dist/ssr-microblog/server/server.mjs &
+sleep 2
+curl -s -o /dev/null -w "/:%{http_code}\n" localhost:4123/
+curl -s -o /dev/null -w "/sobre:%{http_code}\n" localhost:4123/sobre
+curl -s -o /dev/null -w "/nada:%{http_code}\n" localhost:4123/nada
+curl -s localhost:4123/ | grep -o "<title>[^<]*</title>"
+kill %1
+```
+
+Esperado: `/:200`, `/sobre:200`, `/nada:404` e `<title>Início · Microblog</title>`. O build deve dizer `Prerendered 2 static routes.`
+
+- [ ] **Passo 7: Commit**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm format:check
+git add src
+git commit -m "feat: adiciona layout, páginas estáticas e modos de renderização por rota"
+```
+
+### Checkpoint da fatia E
+
+Pare. Peça autorização para push e PR da branch `feat/ui-base`.
+
+---
+
+# Fatia F: Páginas dinâmicas (branch `feat/ui-pages`)
+
+### Tarefa 16: Feed, perfil, post e hidratação incremental
+
+**Arquivos:**
+- Criar: `src/app/features/feed/{feed.page.ts,feed.resolver.ts}`, `src/app/features/profile/{profile.page.ts,profile.resolver.ts}`, `src/app/features/post/{post.page.ts,post.resolver.ts}`, `src/app/shared-ui/author-posts.ts`
+- Modificar: `src/app/app.routes.ts`, `src/app/app.routes.server.ts`, `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md`
+
+- [ ] **Passo 1: Branch**
+
+```bash
+git switch main && git pull && git switch -c feat/ui-pages
+```
+
+- [ ] **Passo 2: Feed**
+
+Crie `src/app/features/feed/feed.resolver.ts`:
+
+```ts
+import { inject } from '@angular/core';
+import type { ResolveFn } from '@angular/router';
+import type { Page, PostDto } from '../../../shared/dto';
+import { ApiService } from '../../core/api.service';
+import { pageFrom } from '../../core/page-param';
+
+export const feedResolver: ResolveFn<Page<PostDto>> = (route) =>
+  inject(ApiService).listPosts(pageFrom(route));
+```
+
+Crie `src/app/features/feed/feed.page.ts`:
+
+```ts
+import { Component, effect, inject, input } from '@angular/core';
+import type { Page, PostDto } from '../../../shared/dto';
+import { SeoService } from '../../core/seo.service';
+import { Pagination } from '../../shared-ui/pagination';
+import { PostCard } from '../../shared-ui/post-card';
+
+@Component({
+  selector: 'app-feed-page',
+  imports: [PostCard, Pagination],
+  template: `
+    <h1>Feed</h1>
+    @for (post of feed().items; track post.id) {
+      <app-post-card [post]="post" />
+    } @empty {
+      <p>Nenhum post nesta página.</p>
+    }
+    <app-pagination [page]="feed().page" [totalPages]="feed().totalPages" />
+  `,
+})
+export class FeedPage {
+  /** Preenchido pelo resolver via `withComponentInputBinding`. */
+  readonly feed = input.required<Page<PostDto>>();
+  private readonly seo = inject(SeoService);
+
+  constructor() {
+    effect(() => {
+      const { page } = this.feed();
+      this.seo.set({
+        title: page === 1 ? 'Feed' : `Feed · página ${page}`,
+        description: 'Últimos posts do microblog.',
+        path: page === 1 ? '/feed' : `/feed?page=${page}`,
+      });
+    });
+  }
+}
+```
+
+- [ ] **Passo 3: Perfil**
+
+Crie `src/app/features/profile/profile.resolver.ts`:
+
+```ts
+import { inject } from '@angular/core';
+import type { ResolveFn } from '@angular/router';
+import { forkJoin } from 'rxjs';
+import type { Page, PostDto, UserDto } from '../../../shared/dto';
+import { ApiService } from '../../core/api.service';
+import { orNotFound } from '../../core/not-found';
+import { pageFrom } from '../../core/page-param';
+
+export interface ProfileData {
+  user: UserDto;
+  posts: Page<PostDto>;
+}
+
+export const profileResolver: ResolveFn<ProfileData | null> = (route) => {
+  const api = inject(ApiService);
+  const notFound = orNotFound<ProfileData>();
+  const handle = route.paramMap.get('handle') ?? '';
+
+  return forkJoin({
+    user: api.getUser(handle),
+    posts: api.listUserPosts(handle, pageFrom(route)),
+  }).pipe(notFound);
+};
+```
+
+Crie `src/app/features/profile/profile.page.ts`:
+
+```ts
+import { Component, effect, inject, input } from '@angular/core';
+import { RouterLink } from '@angular/router';
+import { excerpt } from '../../core/text';
+import { SeoService } from '../../core/seo.service';
+import { Pagination } from '../../shared-ui/pagination';
+import { PostCard } from '../../shared-ui/post-card';
+import type { ProfileData } from './profile.resolver';
+
+@Component({
+  selector: 'app-profile-page',
+  imports: [PostCard, Pagination, RouterLink],
+  template: `
+    @if (profile(); as data) {
+      <header class="profile">
+        <h1>{{ data.user.displayName }}</h1>
+        <p class="handle">&#64;{{ data.user.handle }}</p>
+        <p>{{ data.user.bio }}</p>
+        <p>{{ data.user.postCount }} posts</p>
+      </header>
+      @for (post of data.posts.items; track post.id) {
+        <app-post-card [post]="post" />
+      } @empty {
+        <p>Nenhum post nesta página.</p>
+      }
+      <app-pagination [page]="data.posts.page" [totalPages]="data.posts.totalPages" />
+    } @else {
+      <h1>Perfil não encontrado</h1>
+      <a routerLink="/feed">Voltar ao feed</a>
+    }
+  `,
+})
+export class ProfilePage {
+  readonly profile = input.required<ProfileData | null>();
+  private readonly seo = inject(SeoService);
+
+  constructor() {
+    effect(() => {
+      const data = this.profile();
+      if (!data) {
+        this.seo.set({ title: 'Perfil não encontrado', description: 'Perfil não encontrado.', noindex: true });
+        return;
+      }
+      const { user, posts } = data;
+      const base = `/u/${user.handle}`;
+      this.seo.set({
+        title: `${user.displayName} (@${user.handle})`,
+        description: excerpt(user.bio || `Posts de ${user.displayName}.`, 160),
+        path: posts.page === 1 ? base : `${base}?page=${posts.page}`,
+      });
+    });
+  }
+}
+```
+
+- [ ] **Passo 4: Mais posts do autor (bloco adiado)**
+
+Crie `src/app/shared-ui/author-posts.ts`:
+
+```ts
+import { Component, computed, inject, input } from '@angular/core';
+import { rxResource } from '@angular/core/rxjs-interop';
+import { ApiService } from '../core/api.service';
+import { PostCard } from './post-card';
+
+@Component({
+  selector: 'app-author-posts',
+  imports: [PostCard],
+  template: `
+    <section aria-labelledby="more-title">
+      <h2 id="more-title">Mais posts de &#64;{{ handle() }}</h2>
+      @for (post of others(); track post.id) {
+        <app-post-card [post]="post" />
+      } @empty {
+        <p>Sem outros posts deste autor.</p>
+      }
+    </section>
+  `,
+})
+export class AuthorPosts {
+  readonly handle = input.required<string>();
+  readonly exceptId = input.required<number>();
+
+  private readonly api = inject(ApiService);
+  private readonly page = rxResource({
+    params: () => this.handle(),
+    stream: ({ params }) => this.api.listUserPosts(params, 1),
+  });
+
+  protected readonly others = computed(() =>
+    (this.page.value()?.items ?? []).filter((post) => post.id !== this.exceptId()).slice(0, 4),
+  );
+}
+```
+
+Se o compilador reclamar das opções de `rxResource`, confira a assinatura em `node_modules/@angular/core/types/rxjs-interop.d.ts` e ajuste só os nomes das opções.
+
+- [ ] **Passo 5: Post**
+
+Crie `src/app/features/post/post.resolver.ts`:
+
+```ts
+import { inject } from '@angular/core';
+import type { ResolveFn } from '@angular/router';
+import type { PostDto } from '../../../shared/dto';
+import { ApiService } from '../../core/api.service';
+import { orNotFound } from '../../core/not-found';
+
+export const postResolver: ResolveFn<PostDto | null> = (route) => {
+  const api = inject(ApiService);
+  const notFound = orNotFound<PostDto>();
+
+  return api.getPost(Number(route.paramMap.get('id'))).pipe(notFound);
+};
+```
+
+Crie `src/app/features/post/post.page.ts`:
+
+```ts
+import { Component, effect, inject, input } from '@angular/core';
+import { RouterLink } from '@angular/router';
+import type { PostDto } from '../../../shared/dto';
+import { SeoService } from '../../core/seo.service';
+import { excerpt } from '../../core/text';
+import { AuthorPosts } from '../../shared-ui/author-posts';
+import { PostCard } from '../../shared-ui/post-card';
+
+@Component({
+  selector: 'app-post-page',
+  imports: [PostCard, AuthorPosts, RouterLink],
+  template: `
+    @if (post(); as current) {
+      <h1>Post de {{ current.author.displayName }}</h1>
+      <app-post-card [post]="current" />
+      @defer (on viewport; hydrate on viewport) {
+        <app-author-posts [handle]="current.author.handle" [exceptId]="current.id" />
+      } @placeholder {
+        <p class="placeholder">Mais posts do autor…</p>
+      }
+    } @else {
+      <h1>Post não encontrado</h1>
+      <a routerLink="/feed">Voltar ao feed</a>
+    }
+  `,
+})
+export class PostPage {
+  readonly post = input.required<PostDto | null>();
+  private readonly seo = inject(SeoService);
+
+  constructor() {
+    effect(() => {
+      const current = this.post();
+      if (!current) {
+        this.seo.set({ title: 'Post não encontrado', description: 'Post não encontrado.', noindex: true });
+        return;
+      }
+      this.seo.set({
+        title: `Post de ${current.author.displayName}`,
+        description: excerpt(current.body, 160),
+        path: `/p/${current.id}`,
+        type: 'article',
+      });
+    });
+  }
+}
+```
+
+- [ ] **Passo 6: Rotas**
+
+Em `src/app/app.routes.ts`, adicione os imports no topo do arquivo:
+
+```ts
+import { feedResolver } from './features/feed/feed.resolver';
+import { postResolver } from './features/post/post.resolver';
+import { profileResolver } from './features/profile/profile.resolver';
+```
+
+e insira as três rotas antes da rota `**`:
+
+```ts
+  {
+    path: 'feed',
+    loadComponent: () => import('./features/feed/feed.page').then((m) => m.FeedPage),
+    resolve: { feed: feedResolver },
+    runGuardsAndResolvers: 'paramsOrQueryParamsChange',
+  },
+  {
+    path: 'u/:handle',
+    loadComponent: () => import('./features/profile/profile.page').then((m) => m.ProfilePage),
+    resolve: { profile: profileResolver },
+    runGuardsAndResolvers: 'paramsOrQueryParamsChange',
+  },
+  {
+    path: 'p/:id',
+    loadComponent: () => import('./features/post/post.page').then((m) => m.PostPage),
+    resolve: { post: postResolver },
+  },
+```
+
+Em `src/app/app.routes.server.ts`, insira antes da rota `**`:
+
+```ts
+  {
+    path: 'feed',
+    renderMode: RenderMode.Server,
+    headers: { 'Cache-Control': 'public, max-age=30, stale-while-revalidate=60' },
+  },
+  {
+    path: 'u/:handle',
+    renderMode: RenderMode.Server,
+    headers: { 'Cache-Control': 'public, max-age=60' },
+  },
+  {
+    path: 'p/:id',
+    renderMode: RenderMode.Server,
+    headers: { 'Cache-Control': 'public, max-age=60' },
+  },
+```
+
+- [ ] **Passo 7: Ajustar a spec (o `@defer` da fase 1 não usa curtidas)**
+
+Em `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md`, na seção 1 (tabela), troque `| Hidratação incremental (`@defer`) | Curtidas e comentários |` por `| Hidratação incremental (`@defer`) | "Mais posts do autor" (fase 1); curtidas (fase 2) |`. Na seção 5, troque o item `**Hidratação incremental:** curtidas e comentários em blocos `@defer` com `hydrate on viewport`.` por `**Hidratação incremental:** na fase 1, o bloco "Mais posts do autor" da página de post usa `@defer (on viewport; hydrate on viewport)`. Curtidas entram na fase 2.`
+
+- [ ] **Passo 8: Verificar no navegador de verdade**
+
+```bash
+pnpm test --no-watch && pnpm build
+rm -f data/dev.db* && DATABASE_PATH=data/dev.db pnpm db:seed
+DATABASE_PATH=data/dev.db PORT=4123 node dist/ssr-microblog/server/server.mjs &
+sleep 2
+echo "--- feed (HTML bruto)"; curl -s -i localhost:4123/feed | grep -iE "^HTTP|^cache-control|<title>|og:title|canonical|\(#48\)" | head
+echo "--- post 48"; curl -s localhost:4123/p/48 | grep -oE "Mais posts de @[a-z]+|rel=\"canonical\" href=\"[^\"]+\"" 
+echo "--- 404 post"; curl -s -i localhost:4123/p/99999 | grep -iE "^HTTP|^cache-control|Post não encontrado" | head -4
+kill %1
+```
+
+Esperado:
+- `/feed`: `HTTP/1.1 200`, `Cache-Control: public, max-age=30, stale-while-revalidate=60`, `<title>Feed · Microblog</title>`, `og:title`, canonical `.../feed` e o texto `(#48)`.
+- `/p/48`: `Mais posts de @caio` e canonical `.../p/48`.
+- `/p/99999`: `HTTP/1.1 404`, `Cache-Control: no-store` e `Post não encontrado`.
+
+Se o `Cache-Control` do 404 vier `public, max-age=60` (o header de `RESPONSE_INIT` não sobrescreveu o da rota), mova o `no-store` para o próprio `serverRoutes` removendo o header de `p/:id` e controlando o cache no `orNotFound`/resolver, e registre a decisão num ADR curto.
+
+- [ ] **Passo 9: Commit**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm format:check
+git add src docs
+git commit -m "feat: adiciona feed, perfil e post com SSR, SEO e hidratação incremental"
+```
+
+### Checkpoint da fatia F
+
+Pare. Peça autorização para push e PR da branch `feat/ui-pages`.
+
+---
+
+# Fatia G: Testes E2E (branch `test/e2e`)
+
+### Tarefa 17: Playwright
+
+**Arquivos:**
+- Criar: `playwright.config.ts`, `e2e/ssr.e2e.ts`
+- Modificar: `package.json`
+
+- [ ] **Passo 1: Branch e dependência**
+
+```bash
+git switch main && git pull && git switch -c test/e2e
+pnpm add -D @playwright/test
+pnpm exec playwright install chromium
+```
+
+Se o Chromium reclamar de bibliotecas do sistema (comum no WSL), peça ao usuário para rodar `! sudo pnpm exec playwright install-deps chromium` e depois repita o comando acima.
+
+- [ ] **Passo 2: Configuração**
+
+Crie `playwright.config.ts`:
+
+```ts
+import { defineConfig, devices } from '@playwright/test';
+
+const PORT = 4300;
+const isCI = !!process.env['CI'];
+
+export default defineConfig({
+  testDir: 'e2e',
+  testMatch: '**/*.e2e.ts',
+  fullyParallel: true,
+  forbidOnly: isCI,
+  retries: isCI ? 1 : 0,
+  reporter: isCI ? 'github' : 'list',
+  use: { baseURL: `http://localhost:${PORT}` },
+  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  webServer: {
+    // Exige `pnpm build` antes (o script test:e2e já faz). Recria o banco a cada execução.
+    command:
+      'rm -f data/e2e.db data/e2e.db-shm data/e2e.db-wal && pnpm db:seed && node dist/ssr-microblog/server/server.mjs',
+    url: `http://localhost:${PORT}/api/health`,
+    reuseExistingServer: false,
+    env: {
+      PORT: String(PORT),
+      SITE_URL: `http://localhost:${PORT}`,
+      DATABASE_PATH: 'data/e2e.db',
+      LOG_LEVEL: 'silent',
+      NG_ALLOWED_HOSTS: 'localhost,127.0.0.1',
+    },
+  },
+});
+```
+
+Em `package.json`, em `scripts`, adicione:
+
+```json
+    "test:e2e": "pnpm build && playwright test",
+```
+
+- [ ] **Passo 3: Testes**
+
+Crie `e2e/ssr.e2e.ts`:
+
+```ts
+import { expect, test } from '@playwright/test';
+
+// O seed gera 48 posts; o mais novo é o #48 (id 48) e o autor é "caio".
+
+test.describe('HTML renderizado no servidor (sem executar JavaScript)', () => {
+  test('feed traz posts, SEO e cache no HTML bruto', async ({ request }) => {
+    const res = await request.get('/feed');
+    const html = await res.text();
+
+    expect(res.status()).toBe(200);
+    expect(res.headers()['cache-control']).toBe('public, max-age=30, stale-while-revalidate=60');
+    expect(html).toContain('(#48)');
+    expect(html).toContain('<title>Feed · Microblog</title>');
+    expect(html).toContain('property="og:title"');
+    expect(html).toContain('rel="canonical" href="http://localhost:4300/feed"');
+  });
+
+  test('post traz Open Graph de artigo, canonical e o bloco adiado já renderizado', async ({
+    request,
+  }) => {
+    const html = await (await request.get('/p/48')).text();
+
+    expect(html).toContain('property="og:type" content="article"');
+    expect(html).toContain('rel="canonical" href="http://localhost:4300/p/48"');
+    expect(html).toContain('Mais posts de @caio');
+  });
+
+  test('perfil existente renderiza e inexistente devolve 404', async ({ request }) => {
+    const ok = await request.get('/u/caio');
+    expect(ok.status()).toBe(200);
+    expect(await ok.text()).toContain('Caio Mendes');
+
+    expect((await request.get('/u/ninguem')).status()).toBe(404);
+  });
+
+  test('post inexistente devolve 404 real, sem cache e sem indexação', async ({ request }) => {
+    const res = await request.get('/p/99999');
+    const html = await res.text();
+
+    expect(res.status()).toBe(404);
+    expect(res.headers()['cache-control']).toBe('no-store');
+    expect(html).toContain('Post não encontrado');
+    expect(html).toContain('content="noindex"');
+  });
+
+  test('rota desconhecida devolve 404', async ({ request }) => {
+    const res = await request.get('/nao-existe');
+
+    expect(res.status()).toBe(404);
+    expect(await res.text()).toContain('Página não encontrada');
+  });
+
+  test('páginas prerenderizadas respondem com cache longo', async ({ request }) => {
+    for (const path of ['/', '/sobre']) {
+      const res = await request.get(path);
+      expect(res.status()).toBe(200);
+      expect(res.headers()['cache-control']).toBe('public, max-age=3600');
+    }
+  });
+
+  test('sitemap lista posts e robots aponta para o sitemap', async ({ request }) => {
+    const sitemap = await (await request.get('/sitemap.xml')).text();
+    const robots = await (await request.get('/robots.txt')).text();
+
+    expect(sitemap).toContain('<loc>http://localhost:4300/p/48</loc>');
+    expect(sitemap).toContain('<loc>http://localhost:4300/u/caio</loc>');
+    expect(robots).toContain('Sitemap: http://localhost:4300/sitemap.xml');
+  });
+
+  test('API responde JSON com formato de erro padrão', async ({ request }) => {
+    const res = await request.get('/api/posts/99999');
+
+    expect(res.status()).toBe(404);
+    expect((await res.json()).error.code).toBe('post_not_found');
+  });
+});
+
+test.describe('navegador', () => {
+  test('hidrata sem erros e reaproveita os dados do servidor (sem chamar a API)', async ({
+    page,
+  }) => {
+    const errors: string[] = [];
+    const apiCalls: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('request', (request) => {
+      if (request.url().includes('/api/')) apiCalls.push(request.url());
+    });
+
+    await page.goto('/feed');
+    await page.waitForLoadState('networkidle');
+
+    expect(errors).toEqual([]);
+    expect(apiCalls).toEqual([]);
+  });
+
+  test('paginação navega por query string', async ({ page }) => {
+    await page.goto('/feed');
+    await page.getByRole('link', { name: 'Próxima' }).click();
+
+    await expect(page).toHaveURL(/\/feed\?page=2$/);
+    await expect(page.getByText('(#38)')).toBeVisible();
+    await expect(page.getByText('(#48)')).toHaveCount(0);
+  });
+
+  test('clicar no autor abre o perfil', async ({ page }) => {
+    await page.goto('/p/48');
+    await page.getByRole('link', { name: 'Caio Mendes' }).first().click();
+
+    await expect(page).toHaveURL(/\/u\/caio$/);
+    await expect(page.getByRole('heading', { name: 'Caio Mendes' })).toBeVisible();
+  });
+});
+```
+
+- [ ] **Passo 4: Rodar**
+
+Run: `pnpm test:e2e`
+Esperado: `11 passed`.
+
+Se o teste "reaproveita os dados do servidor" falhar com chamadas à API, investigue o `HttpTransferCache` (chave de cache vs. URL absoluta no servidor e relativa no cliente) antes de qualquer outra coisa: é o ponto central do estudo de SSR. Registre a causa e a solução num ADR curto (`docs/adr/0004-...`).
+
+- [ ] **Passo 5: Commit**
+
+```bash
+pnpm format:check && pnpm lint
+git add playwright.config.ts e2e package.json pnpm-lock.yaml
+git commit -m "test: adiciona testes E2E do HTML renderizado, SEO, cache e hidratação"
+```
+
+### Checkpoint da fatia G
+
+Pare. Peça autorização para push e PR da branch `test/e2e`.
+
+---
+
+# Fatia H: Docker, CI e documentação (branch `chore/delivery`)
+
+### Tarefa 18: Dockerfile
+
+**Arquivos:**
+- Criar: `Dockerfile`, `.dockerignore`
+
+- [ ] **Passo 1: Branch**
+
+```bash
+git switch main && git pull && git switch -c chore/delivery
+```
+
+- [ ] **Passo 2: `.dockerignore`**
+
+```
+node_modules
+dist
+.angular
+.git
+data
+test-results
+playwright-report
+docs
+e2e
+.github
+*.md
+```
+
+- [ ] **Passo 3: `Dockerfile`**
+
+```dockerfile
+# syntax=docker/dockerfile:1
+
+FROM node:24-slim AS base
+WORKDIR /app
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+
+FROM base AS build
+RUN pnpm install --frozen-lockfile
+COPY . .
+RUN pnpm build
+
+FROM base AS prod-deps
+RUN pnpm install --frozen-lockfile --prod
+
+FROM node:24-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    PORT=4000 \
+    DATABASE_PATH=/data/microblog.db \
+    NG_ALLOWED_HOSTS=localhost,127.0.0.1
+COPY --from=prod-deps /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY drizzle ./drizzle
+COPY package.json ./
+RUN mkdir -p /data && chown node:node /data
+USER node
+VOLUME /data
+EXPOSE 4000
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 4000) + '/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+CMD ["node", "dist/ssr-microblog/server/server.mjs"]
+```
+
+- [ ] **Passo 4: Construir e testar a imagem (se o Docker estiver disponível)**
+
+```bash
+docker --version && docker build -t ssr-microblog:dev .
+docker run -d --name microblog-check -p 4400:4000 ssr-microblog:dev
+sleep 4
+curl -s localhost:4400/api/health; echo
+curl -s -o /dev/null -w "feed:%{http_code}\n" localhost:4400/feed
+docker inspect --format '{{.State.Health.Status}}' microblog-check
+docker rm -f microblog-check
+```
+
+Esperado: `{"status":"ok"}`, `feed:200` (o feed vazio é válido: o banco é criado e migrado sem seed) e a saúde do container `healthy` (pode levar até 30 s; repita o `inspect`).
+
+Se o Docker não estiver instalado, pule este passo e confirme a imagem no CI (tarefa 19).
+
+Se o `pnpm install --prod` falhar compilando `better-sqlite3`, instale as ferramentas de build só no estágio `prod-deps`: `RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*` antes do `pnpm install`.
+
+- [ ] **Passo 5: Commit**
+
+```bash
+git add Dockerfile .dockerignore
+git commit -m "chore: adiciona Dockerfile multi-stage com healthcheck"
+```
+
+### Tarefa 19: Pipeline de CI
+
+**Arquivos:**
+- Criar: `.github/workflows/ci.yml`
+
+- [ ] **Passo 1: Workflow**
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test --no-watch
+      - run: pnpm test:server
+      - run: pnpm build
+
+  e2e:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+
+  docker:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t ssr-microblog:ci .
+```
+
+- [ ] **Passo 2: Validar a sintaxe**
+
+```bash
+pnpm format:check
+gh workflow list 2>&1 | head -3
+```
+
+Esperado: o Prettier valida o YAML. A validação real do workflow acontece no primeiro PR; se o job falhar por detalhe do ambiente (versão de action, `pnpm/action-setup`), corrija e registre no commit.
+
+- [ ] **Passo 3: Commit**
+
+```bash
+git add .github/workflows/ci.yml
+git commit -m "ci: adiciona pipeline com lint, testes, build, E2E e imagem Docker"
+```
+
+### Tarefa 20: README e ADRs
+
+**Arquivos:**
+- Criar: `README.md` (substituir o gerado pelo CLI), `docs/adr/0001-monolito-ssr-com-express.md`, `docs/adr/0002-sqlite-drizzle-e-modulo-nativo-externo.md`, `docs/adr/0003-data-fetching-via-http-loopback.md`
+
+- [ ] **Passo 1: ADR 0001**
+
+Crie `docs/adr/0001-monolito-ssr-com-express.md`:
+
+```markdown
+# ADR 0001: Monólito SSR com Express
+
+Data: 2026-11-23 · Status: aceito
+
+## Contexto
+
+O projeto estuda SSR com Angular. Era preciso decidir onde ficam a API e o servidor de renderização.
+
+## Decisão
+
+Um único processo Node com Express: ele serve a API (`/api/*`), `sitemap.xml`, `robots.txt` e delega o resto ao Angular SSR. O servidor é separado em camadas (`api` → `services` → `db`) e `createApp()` não conhece o Angular nem chama `listen`.
+
+## Consequências
+
+- Poucas peças e deploy simples; o foco fica em SSR.
+- A API é testável sem subir o Angular.
+- Frontend e API compartilham o ciclo de deploy. Se isso virar problema, a camada `src/server` pode virar um serviço próprio sem mudar a UI, pois ela só fala HTTP.
+- Express é o caminho oficial do `@angular/ssr`, com mais documentação disponível.
+```
+
+- [ ] **Passo 2: ADR 0002**
+
+Crie `docs/adr/0002-sqlite-drizzle-e-modulo-nativo-externo.md`:
+
+```markdown
+# ADR 0002: SQLite com Drizzle e módulo nativo externo ao bundle
+
+Data: 2026-11-23 · Status: aceito
+
+## Contexto
+
+Precisamos de persistência relacional simples, sem infraestrutura extra. O build do Angular empacota o servidor em um único arquivo ESM.
+
+## Decisão
+
+SQLite via `better-sqlite3` com Drizzle ORM e migrations versionadas em `drizzle/`. O `better-sqlite3` é um módulo nativo e quebra se for embutido no bundle (`__dirname is not defined`); por isso está em `externalDependencies` no `angular.json` e em `allowBuilds` no `pnpm-workspace.yaml`. As migrations são lidas em runtime de `MIGRATIONS_DIR` (padrão `drizzle`).
+
+## Consequências
+
+- A imagem Docker precisa de `node_modules` de produção e da pasta `drizzle/`.
+- O banco fica num arquivo; em container, num volume (`/data`).
+- Trocar para Postgres mexe só em `src/server/db`.
+```
+
+- [ ] **Passo 3: ADR 0003**
+
+Crie `docs/adr/0003-data-fetching-via-http-loopback.md`:
+
+```markdown
+# ADR 0003: Dados das páginas via HTTP (loopback no servidor)
+
+Data: 2026-11-23 · Status: aceito
+
+## Contexto
+
+Os componentes precisam dos mesmos dados no servidor (SSR) e no navegador.
+
+## Decisão
+
+Os resolvers usam `HttpClient` contra `/api` nos dois ambientes. No servidor, a chamada volta para o próprio Express (loopback) e o resultado é transferido ao navegador pelo cache de transferência HTTP do Angular, que evita repetir a chamada na hidratação (verificado em E2E). O host aceito é controlado por `allowedHosts`/`NG_ALLOWED_HOSTS`.
+
+## Consequências
+
+- Um único caminho de código para servidor e navegador.
+- Custo extra de uma chamada local por requisição renderizada. Alternativa futura: injetar os serviços direto no servidor; só vale se a medição mostrar necessidade.
+- Na fase 2, o servidor precisará repassar o cookie de sessão nessas chamadas.
+- Páginas prerenderizadas não emitem `canonical`/`og:url`, porque a URL pública só é conhecida em runtime.
+```
+
+- [ ] **Passo 4: README**
+
+Substitua `README.md` por:
+
+````markdown
+# Microblog SSR
+
+Microblog feito com **Angular 22 e renderização no servidor (SSR)**, para estudar SSR com práticas de engenharia de produção. Design completo em [`docs/superpowers/specs`](docs/superpowers/specs/2026-11-23-microblog-ssr-design.md).
+
+## O que demonstra
+
+- Prerender (SSG) em `/` e `/sobre`; SSR por requisição em `/feed`, `/u/:handle` e `/p/:id`.
+- SEO no servidor: title, meta, Open Graph, canonical, `sitemap.xml` e `robots.txt`.
+- Cache HTTP por rota, 404 reais e hidratação incremental (`@defer`).
+- API em Express com SQLite/Drizzle, testes de unidade, integração e E2E.
+
+## Requisitos
+
+- [fnm](https://github.com/Schniz/fnm) (Node 24, definido em `.node-version`) e `corepack` (pnpm).
+
+## Como rodar
+
+```bash
+fnm use                 # Node 24
+corepack enable pnpm
+pnpm install
+pnpm db:seed            # cria data/microblog.db com dados de exemplo
+pnpm start              # dev server em http://localhost:4200
+```
+
+Build de produção:
+
+```bash
+pnpm build
+NG_ALLOWED_HOSTS=localhost,127.0.0.1 node dist/ssr-microblog/server/server.mjs
+```
+
+Variáveis de ambiente em [`.env.example`](.env.example). Em produção, defina `SITE_URL` e inclua o domínio público em `NG_ALLOWED_HOSTS`.
+
+## Docker
+
+```bash
+docker build -t ssr-microblog .
+docker run -p 4000:4000 -v microblog-data:/data ssr-microblog
+```
+
+## Qualidade
+
+| Comando | O que faz |
+|---|---|
+| `pnpm lint` / `pnpm format:check` | ESLint e Prettier |
+| `pnpm typecheck` | TypeScript sem emitir |
+| `pnpm test --no-watch` | Testes da UI (Vitest via Angular) |
+| `pnpm test:server` | Testes de servidor (Vitest em Node) |
+| `pnpm test:e2e` | Build + testes E2E com Playwright |
+
+## Documentação
+
+- Decisões de arquitetura: [`docs/adr`](docs/adr)
+- Planos de implementação: [`docs/superpowers/plans`](docs/superpowers/plans)
+- Regras para quem contribui (humanos e agentes): [`AGENTS.md`](AGENTS.md)
+````
+
+- [ ] **Passo 5: Atualizar comandos no `AGENTS.md`**
+
+Em `AGENTS.md`, substitua a nota `> Os comandos de build, teste e lint serão adicionados aqui ...` por:
+
+```markdown
+Comandos (sempre com Node 24 ativo, `fnm use`):
+
+- `pnpm install`, `pnpm start` (dev), `pnpm build`, `pnpm db:seed`, `pnpm db:generate`
+- `pnpm lint`, `pnpm format:check`, `pnpm typecheck`
+- `pnpm test --no-watch` (UI), `pnpm test:server` (servidor), `pnpm test:e2e` (build + Playwright)
+```
+
+- [ ] **Passo 6: Verificar tudo**
+
+```bash
+pnpm format && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test --no-watch && pnpm test:server && pnpm test:e2e
+```
+
+Esperado: tudo passa.
+
+- [ ] **Passo 7: Commit**
+
+```bash
+git add README.md AGENTS.md docs/adr
+git commit -m "docs: adiciona README, ADRs e comandos do projeto"
+```
+
+### Checkpoint da fatia H e fechamento da fase 1
+
+- Peça autorização para push e PR da branch `chore/delivery`. Confirme que o CI fica verde no PR (`gh pr checks`).
+- Depois do merge, pergunte ao usuário se quer tentar ativar a proteção da branch `main` com `gh api` (pode exigir plano pago para repositório privado) e só então execute.
+- Para encerrar a fase 1, use `superpowers:finishing-a-development-branch` e depois abra o brainstorming da **fase 2** (login por sessão, criar post e curtir), que ganha spec e plano próprios.
+
+---
+
+## Autoavaliação do plano
+
+**Cobertura da spec:** SSG (tarefa 15), SSR por requisição, cache e 404 (16), SEO e `SeoService` (13, 16), sitemap/robots (10), hidratação incremental (16), TransferState verificado em E2E (17), API e camadas (7–9), seed (11), `createApp` sem `listen` (12), erros 404/500 (9, 12, 13), config e logger (4, 5), Docker (18), CI (19), ADRs e README (20), testes de unidade/integração/E2E (4–17). Itens da spec ajustados pelo que foi verificado: `allowBuilds` no lugar de `onlyBuiltDependencies`, `externalDependencies`, e o `@defer` da fase 1 usando "mais posts do autor" (curtidas ficam na fase 2). Ambos os ajustes estão nas tarefas 3 e 16.
+
+**Consistência de nomes:** `PageRequest`, `toPage`, `offsetOf`, `PostRow`/`PostDto`, `createPostsRepository`/`createUsersRepository`, `createPostsService`/`createUsersService`, `createApiRouter`, `createSeoRouter`, `createApp`, `createDb`/`DbHandle`/`Db`, `orNotFound`, `pageFrom`, `excerpt`, `SeoService.set`, `SITE_URL` e o nome do projeto `ssr-microblog` (caminho `dist/ssr-microblog/server/server.mjs`) são usados do mesmo jeito em todas as tarefas.
+
+**Pontos que dependem de verificação em tempo de execução** (cada um tem passo de checagem e plano B): opções do `rxResource` (tarefa 16, passo 4), precedência do `Cache-Control` do 404 (tarefa 16, passo 8), bundle do `pino` (tarefa 12, passo 7), build nativo no Docker (tarefa 18, passo 4), reaproveitamento do cache de transferência HTTP (tarefa 17, passo 4).
