@@ -4,7 +4,7 @@ import { posts, users } from '../db/schema';
 export function insertUser(db: Db, handle: string, displayName = handle) {
   return db
     .insert(users)
-    .values({ handle, displayName, bio: `Bio de ${handle}` })
+    .values({ handle, displayName, bio: `Bio of ${handle}` })
     .returning()
     .get();
 }
