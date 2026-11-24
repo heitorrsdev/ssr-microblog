@@ -14,8 +14,8 @@ Este arquivo permite que um agente novo (sem o contexto da sessão anterior) con
 | Fatia | Branch | Tarefas | Estado |
 |---|---|---|---|
 | A Fundação | `chore/scaffold` | 1-3 | Mergeada (PR #1) |
-| B Configuração e banco | `feat/config-db` | 4-6 | Em andamento |
-| C Serviços e API | `feat/api` | 7-9 | Pendente |
+| B Configuração e banco | `feat/config-db` | 4-6 | Em revisão (PR da fatia B) |
+| C Serviços e API | `feat/api` | 7-9 | Próxima |
 | D SEO, seed e integração | `feat/server-wiring` | 10-12 | Pendente |
 | E Base da interface | `feat/ui-base` | 13-15 | Pendente |
 | F Páginas dinâmicas | `feat/ui-pages` | 16 | Pendente |

@@ -3,9 +3,9 @@ import { createDb, type DbHandle } from './database';
 import { posts, users } from './schema';
 
 describe('createDb', () => {
-  let handle: DbHandle;
+  let handle: DbHandle | undefined;
 
-  afterEach(() => handle.close());
+  afterEach(() => handle?.close());
 
   it('aplica as migrations e permite inserir e ler', () => {
     handle = createDb(':memory:', 'drizzle');
