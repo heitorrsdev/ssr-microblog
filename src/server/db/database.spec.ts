@@ -21,8 +21,9 @@ describe('createDb', () => {
 
   it('rejeita post de usuário inexistente (foreign keys ligadas)', () => {
     handle = createDb(':memory:', 'drizzle');
+    const { db } = handle;
 
-    expect(() => handle.db.insert(posts).values({ userId: 999, body: 'x' }).run()).toThrow();
+    expect(() => db.insert(posts).values({ userId: 999, body: 'x' }).run()).toThrow();
   });
 
   it('rejeita handle duplicado', () => {
