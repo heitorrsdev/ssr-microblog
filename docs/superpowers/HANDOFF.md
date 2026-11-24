@@ -14,9 +14,9 @@ This file lets a fresh agent (without the previous session's context) continue w
 | Slice | Branch | Tasks | Status |
 |---|---|---|---|
 | A Foundation | `chore/scaffold` | 1-3 | Merged (PR #1) |
-| B Config and database | `feat/config-db` | 4-6 | In review (slice B PR) |
-| C Services and API | `feat/api` | 7-9 | Next |
-| D SEO, seed and integration | `feat/server-wiring` | 10-12 | Pending |
+| B Config and database | `feat/config-db` | 4-6 | Merged (PR #2) |
+| C Services and API | `feat/api` | 7-9 | Done, awaiting PR |
+| D SEO, seed and integration | `feat/server-wiring` | 10-12 | Next |
 | E UI base | `feat/ui-base` | 13-15 | Pending |
 | F Dynamic pages | `feat/ui-pages` | 16 | Pending |
 | G E2E | `test/e2e` | 17 | Pending |
