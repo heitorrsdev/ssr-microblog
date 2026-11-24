@@ -1,1 +1,109 @@
-/* You can add global styles to this file, and also import other style files */
+:root {
+  --bg: #fafafa;
+  --fg: #1c1c1e;
+  --muted: #5c5c66;
+  --accent: #1a56db;
+  --card: #fff;
+  --border: #e3e3e8;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121214;
+    --fg: #ececf0;
+    --muted: #a0a0ad;
+    --accent: #8ab4ff;
+    --card: #1c1c20;
+    --border: #2e2e35;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--fg);
+}
+a {
+  color: var(--accent);
+}
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+.skip-link {
+  position: absolute;
+  left: -999px;
+}
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+}
+.site-header,
+.site-footer {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.site-header nav {
+  display: flex;
+  gap: 1rem;
+}
+.site-header a.active {
+  font-weight: 700;
+}
+.brand {
+  font-weight: 800;
+  text-decoration: none;
+}
+.site-footer {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.button {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  background: var(--accent);
+  color: var(--bg);
+  text-decoration: none;
+}
+.post-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  margin: 0 0 0.75rem;
+}
+.post-card header {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.post-card .handle,
+.post-card .when,
+.profile .handle {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.post-card .body {
+  margin: 0.5rem 0;
+  white-space: pre-wrap;
+}
+.pagination {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  align-items: center;
+  margin: 1rem 0;
+}
+.placeholder {
+  color: var(--muted);
+}
