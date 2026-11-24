@@ -1,96 +1,97 @@
 # Microblog SSR: Design
 
-Data: 2026-11-23 · Status: aguardando revisão
+Date: 2026-11-23 · Status: awaiting review
 
-## 1. Objetivo
+## 1. Goal
 
-Projeto de estudo de **renderização no servidor (SSR)** com um meta-framework, construído com boas práticas de engenharia: testes, CI, Docker, ADRs e PRs pequenos. O produto é um **microblog** (mini rede social) entregue em fases. O produto importa menos que o aprendizado de SSR.
+A study project on **server-side rendering (SSR)** with a meta-framework, built with good engineering practices: tests, CI, Docker, ADRs and small PRs. The product is a **microblog** (mini social network) delivered in phases. The product matters less than learning SSR.
 
-### Conceitos de SSR a exercitar
+### SSR concepts to exercise
 
-| Conceito | Onde aparece |
+| Concept | Where it shows up |
 |---|---|
-| SSG (pré-renderização) | Landing e "sobre" |
-| SSR por requisição | Feed, perfil e post |
-| Data fetching no servidor + `TransferState` | Todas as páginas dinâmicas |
+| SSG (prerendering) | Landing and "about" |
+| Per-request SSR | Feed, profile and post |
+| Server-side data fetching + `TransferState` | All dynamic pages |
 | SEO | Title, meta, canonical, Open Graph, `sitemap.xml`, `robots.txt` |
-| Hidratação incremental (`@defer`) | Curtidas e comentários |
-| Cache HTTP | `Cache-Control` por rota |
-| Erros com status correto | 404 e 500 reais |
-| SSR com estado de usuário (fase 2) | Sessão em cookie, `Vary`, `no-store` |
+| Incremental hydration (`@defer`) | Likes and comments |
+| HTTP cache | `Cache-Control` per route |
+| Errors with the correct status | Real 404 and 500 |
+| SSR with user state (phase 2) | Cookie session, `Vary`, `no-store` |
 
-## 2. Decisões
+## 2. Decisions
 
-- **Framework:** Angular 22 (latest do CLI em 2026-11-23: 22.3.0) com `@angular/ssr`, TypeScript estrito, standalone components e signals.
-- **Runtime:** Node 24 LTS (o CLI exige `^22.22.3 || ^24.15.0 || >=26`), gerenciado com `fnm` (`.node-version`).
-- **Gerenciador de pacotes:** pnpm, fixado em `packageManager` e ativado via `corepack`. Dependências com build nativo (`better-sqlite3`) entram em `allowBuilds` (`pnpm-workspace.yaml`) e são marcadas como `externalDependencies` no build do Angular.
-- **Servidor:** Express, o caminho oficial do `@angular/ssr`. API e SSR no mesmo processo (monólito).
-- **Banco:** SQLite com `better-sqlite3` e Drizzle ORM (migrations versionadas).
-- **Validação:** Zod (entrada da API e variáveis de ambiente). **Log:** `pino`.
-- **Testes:** Vitest (unidade e integração) e Playwright (E2E). A escolha do Vitest como runner padrão do Angular 22 deve ser **confirmada no setup**.
-- **Qualidade:** ESLint (`angular-eslint`), Prettier, Conventional Commits.
-- **Entrega:** Dockerfile multi-stage e GitHub Actions.
-- **Fora do escopo (YAGNI):** tempo real, upload de imagens, notificações, i18n, deploy em nuvem.
+- **Framework:** Angular 22 (CLI latest on 2026-11-23: 22.3.0) with `@angular/ssr`, strict TypeScript, standalone components and signals.
+- **Runtime:** Node 24 LTS (the CLI requires `^22.22.3 || ^24.15.0 || >=26`), managed with `fnm` (`.node-version`).
+- **Package manager:** pnpm, pinned in `packageManager` and enabled via `corepack`. Dependencies with a native build (`better-sqlite3`) go in `allowBuilds` (`pnpm-workspace.yaml`) and are marked as `externalDependencies` in the Angular build.
+- **Server:** Express, the official `@angular/ssr` path. API and SSR in the same process (monolith).
+- **Database:** SQLite with `better-sqlite3` and Drizzle ORM (versioned migrations).
+- **Validation:** Zod (API input and environment variables). **Logging:** `pino`.
+- **Tests:** Vitest (unit and integration) and Playwright (E2E). Vitest being the default runner in Angular 22 must be **confirmed during setup**.
+- **Quality:** ESLint (`angular-eslint`), Prettier, Conventional Commits.
+- **Delivery:** multi-stage Dockerfile and GitHub Actions.
+- **Language:** code, identifiers, tests, docs and commits are in English. User-facing UI copy is in pt-BR.
+- **Out of scope (YAGNI):** real time, image upload, notifications, i18n, cloud deploy.
 
-## 3. Estrutura e fronteiras
+## 3. Structure and boundaries
 
 ```
 ssr/
 ├─ src/
 │  ├─ app/               # Angular (UI)
-│  │  ├─ core/           # sessão, interceptors, SeoService
-│  │  ├─ features/       # feed, post, profile (cada um com suas rotas)
+│  │  ├─ core/           # session, interceptors, SeoService
+│  │  ├─ features/       # feed, post, profile (each with its routes)
 │  │  └─ app.routes.ts, app.routes.server.ts
-│  ├─ server/            # só roda no Node
-│  │  ├─ api/            # rotas HTTP + validação (Zod)
-│  │  ├─ services/       # regras de negócio
-│  │  ├─ db/             # schema Drizzle, migrations, repositórios
-│  │  └─ app.ts          # monta o Express (sem listen, para testar)
-│  ├─ shared/            # DTOs/tipos usados pelos dois lados
+│  ├─ server/            # runs only on Node
+│  │  ├─ api/            # HTTP routes + validation (Zod)
+│  │  ├─ services/       # business rules
+│  │  ├─ db/             # Drizzle schema, migrations, repositories
+│  │  └─ app.ts          # builds Express (no listen, for testing)
+│  ├─ shared/            # DTOs/types used by both sides
 │  └─ server.ts          # entrypoint: Express + Angular SSR
 ├─ e2e/                  # Playwright
 ├─ docs/adr, docs/superpowers
 ├─ Dockerfile, .github/workflows/ci.yml
 ```
 
-Regras:
+Rules:
 
-- `app/` nunca importa de `server/`, e `server/` nunca importa de `app/`. O que for comum vive em `shared/`.
-- Dentro de `server/`, cada camada só conhece a de baixo: `api` → `services` → `db`.
-- `app.ts` exporta o Express sem chamar `listen`, para a API ser testável sem o Angular.
+- `app/` never imports from `server/`, and `server/` never imports from `app/`. Anything shared lives in `shared/`.
+- Inside `server/`, each layer only knows the one below it: `api` → `services` → `db`.
+- `app.ts` exports Express without calling `listen`, so the API is testable without Angular.
 
-## 4. Fluxo de uma requisição
+## 4. Request flow
 
-1. Arquivos estáticos do build.
-2. `/api/*`, `/sitemap.xml` e `/robots.txt` são tratados pelo Express.
-3. Qualquer outra URL vai ao Angular SSR, que devolve HTML.
-4. No navegador, o Angular hidrata o HTML e reaproveita os dados via `TransferState`, sem repetir as chamadas.
+1. Static files from the build.
+2. `/api/*`, `/sitemap.xml` and `/robots.txt` are handled by Express.
+3. Any other URL goes to Angular SSR, which returns HTML.
+4. In the browser, Angular hydrates the HTML and reuses the data through `TransferState`, without repeating the calls.
 
-Os componentes buscam dados com `HttpClient` em `/api`, com o mesmo código no servidor e no navegador. No servidor a chamada passa por loopback para o próprio Express. Injetar os serviços direto no processo é uma otimização possível, a registrar em ADR se for adotada. Na fase 2, o servidor deve repassar o cookie de sessão nessas chamadas.
+Components fetch data with `HttpClient` against `/api`, using the same code on the server and in the browser. On the server the call goes through loopback to Express itself. Injecting the services directly in-process is a possible optimization, to be recorded in an ADR if adopted. In phase 2, the server must forward the session cookie in those calls.
 
-## 5. Renderização por rota (fase 1)
+## 5. Rendering per route (phase 1)
 
-| Rota | Modo | Cache-Control | Observação |
+| Route | Mode | Cache-Control | Notes |
 |---|---|---|---|
-| `/`, `/sobre` | Prerender | `public`, longo | Gerada no build |
-| `/feed` | SSR | `public, max-age=30, stale-while-revalidate` | Paginação por `?page=` |
-| `/u/:handle` | SSR | `public, max-age=60` | Meta tags de perfil |
-| `/p/:id` | SSR | `public, max-age=60` | Open Graph com o texto do post; 404 real se não existir |
-| `**` | SSR | `no-store` | Página 404 com status 404 |
+| `/`, `/sobre` | Prerender | `public`, long | Generated at build time |
+| `/feed` | SSR | `public, max-age=30, stale-while-revalidate` | Pagination via `?page=` |
+| `/u/:handle` | SSR | `public, max-age=60` | Profile meta tags |
+| `/p/:id` | SSR | `public, max-age=60` | Open Graph with the post text; real 404 if it does not exist |
+| `**` | SSR | `no-store` | 404 page with status 404 |
 
-Na fase 2, rotas dependentes de sessão usam `private, no-store` com `Vary: Cookie`.
+In phase 2, session-dependent routes use `private, no-store` with `Vary: Cookie`.
 
-- **SEO:** um `SeoService` define title, descrição, canonical e Open Graph por rota. `sitemap.xml` e `robots.txt` são gerados no servidor a partir do banco.
-- **Hidratação incremental:** curtidas e comentários em blocos `@defer` com `hydrate on viewport`.
-- **Erros:** 404 e 500 com o status HTTP correto. O servidor loga o erro e não expõe detalhes ao cliente.
-- **Código só de navegador:** `window`/`localStorage` protegidos por `afterNextRender` ou `isPlatformBrowser`.
+- **SEO:** a `SeoService` sets title, description, canonical and Open Graph per route. `sitemap.xml` and `robots.txt` are generated on the server from the database.
+- **Incremental hydration:** likes and comments in `@defer` blocks with `hydrate on viewport`.
+- **Errors:** 404 and 500 with the correct HTTP status. The server logs the error and does not expose details to the client.
+- **Browser-only code:** `window`/`localStorage` guarded by `afterNextRender` or `isPlatformBrowser`.
 
-## 6. Dados e API (fase 1)
+## 6. Data and API (phase 1)
 
-Fase 1 é **somente leitura** e usa um script de seed.
+Phase 1 is **read-only** and uses a seed script.
 
-- `users`: `id`, `handle` (único), `display_name`, `bio`, `created_at`.
-- `posts`: `id`, `user_id`, `body` (até 280 caracteres), `created_at`, com índice em `created_at`.
+- `users`: `id`, `handle` (unique), `display_name`, `bio`, `created_at`.
+- `posts`: `id`, `user_id`, `body` (up to 280 characters), `created_at`, with an index on `created_at`.
 
 Endpoints:
 
@@ -100,45 +101,45 @@ Endpoints:
 - `GET /api/users/:handle/posts`
 - `GET /api/health`
 
-Erros seguem o formato único `{ "error": { "code", "message" } }`. A configuração vem de variáveis de ambiente validadas na inicialização.
+Errors follow a single format `{ "error": { "code", "message" } }`. Configuration comes from environment variables validated at startup.
 
-## 7. Testes
+## 7. Tests
 
-- **Vitest, unidade:** serviços, `SeoService` e componentes.
-- **Vitest, integração:** API com SQLite em memória (via `supertest`), cobrindo repositórios e rotas.
+- **Vitest, unit:** services, `SeoService` and components.
+- **Vitest, integration:** API with in-memory SQLite (via `supertest`), covering repositories and routes.
 - **Playwright, E2E:**
-  - o HTML bruto da resposta já contém o texto do post, sem executar JS;
-  - a hidratação funciona;
-  - post inexistente devolve status 404;
-  - meta tags e `sitemap.xml` estão corretos.
-- TDD nas camadas de serviço e API. Sem meta numérica de cobertura.
+  - the raw response HTML already contains the post text, without running JS;
+  - hydration works;
+  - a nonexistent post returns status 404;
+  - meta tags and `sitemap.xml` are correct.
+- TDD in the service and API layers. No numeric coverage target.
 
-## 8. Qualidade e entrega
+## 8. Quality and delivery
 
-- TypeScript estrito, ESLint, Prettier, Conventional Commits.
-- `main` protegida, trabalho em PRs pequenos por fatia, mesmo sendo projeto solo.
-- ADRs curtos em `docs/adr` para decisões relevantes: Express, SQLite, pnpm, loopback vs. injeção direta.
-- Dockerfile multi-stage, usuário não-root e `HEALTHCHECK` em `/api/health`. O banco fica em volume.
-- GitHub Actions: lint, typecheck, testes, build, E2E e build da imagem Docker.
+- Strict TypeScript, ESLint, Prettier, Conventional Commits.
+- Protected `main`, work in small PRs per slice, even as a solo project.
+- Short ADRs in `docs/adr` for relevant decisions: Express, SQLite, pnpm, loopback vs. direct injection.
+- Multi-stage Dockerfile, non-root user and `HEALTHCHECK` on `/api/health`. The database lives in a volume.
+- GitHub Actions: lint, typecheck, tests, build, E2E and Docker image build.
 
-## 9. Fases
+## 9. Phases
 
-1. **Fase 1 (público, somente leitura):** feed, perfil, post, SEO, cache, hidratação incremental, testes, Docker e CI.
-2. **Fase 2:** login por sessão em cookie `httpOnly`, criar post e curtir. SSR com estado de usuário e cache seguro.
-3. **Fase 3 (opcional):** seguir e feed personalizado.
+1. **Phase 1 (public, read-only):** feed, profile, post, SEO, cache, incremental hydration, tests, Docker and CI.
+2. **Phase 2:** login with an `httpOnly` cookie session, create post and like. SSR with user state and safe caching.
+3. **Phase 3 (optional):** follow and personalized feed.
 
-Cada fase é entregável isoladamente e tem seu próprio plano de implementação.
+Each phase is independently deliverable and has its own implementation plan.
 
-## 10. Verificado no setup (2026-11-23)
+## 10. Verified during setup (2026-11-23)
 
-- O Vitest 5 é o runner padrão do Angular 22 (`@angular/build:unit-test`). Os testes de servidor rodam num Vitest separado em Node puro.
-- `better-sqlite3` não funciona embutido no bundle do servidor; é preciso `externalDependencies` e ele deve existir em `node_modules` na imagem Docker.
-- O Angular 22 valida o header `Host` (SSRF). Em runtime, `NG_ALLOWED_HOSTS` lista os hosts aceitos.
-- `ServerRoute` aceita `headers` e `status`; `RESPONSE_INIT` permite definir status e headers a partir de um resolver.
-- A hidratação incremental está habilitada por padrão.
-- Páginas prerenderizadas não emitem `canonical`/`og:url`, porque a URL pública só é conhecida em runtime.
+- Vitest 5 is Angular 22's default runner (`@angular/build:unit-test`). Server tests run in a separate Vitest on plain Node.
+- `better-sqlite3` does not work bundled into the server bundle; it needs `externalDependencies` and must exist in `node_modules` in the Docker image.
+- Angular 22 validates the `Host` header (SSRF). At runtime, `NG_ALLOWED_HOSTS` lists the accepted hosts.
+- `ServerRoute` accepts `headers` and `status`; `RESPONSE_INIT` lets you set status and headers from a resolver.
+- Incremental hydration is enabled by default.
+- Prerendered pages do not emit `canonical`/`og:url`, because the public URL is only known at runtime.
 
-## 11. Riscos em aberto
+## 11. Open risks
 
-- Evitar que o cache sirva conteúdo de um usuário a outro (fase 2).
-- Respostas 404 de `/p/:id` não devem ser cacheadas como as de sucesso (cobertas por teste E2E).
+- Prevent the cache from serving one user's content to another (phase 2).
+- 404 responses from `/p/:id` must not be cached like successful ones (covered by an E2E test).
