@@ -17,9 +17,9 @@ This file lets a fresh agent (without the previous session's context) continue w
 | A Foundation | `chore/scaffold` | 1-3 | Merged (PR #1) |
 | B Config and database | `feat/config-db` | 4-6 | Merged (PR #2) |
 | C Services and API | `feat/api` | 7-9 | Merged (PR #3) |
-| D SEO, seed and integration | `feat/server-wiring` | 10-12 | In review (awaiting push and PR) |
-| E UI base | `feat/ui-base` | 13-15 | Next |
-| F Dynamic pages | `feat/ui-pages` | 16 | Pending |
+| D SEO, seed and integration | `feat/server-wiring` | 10-12 | Merged (PR #6) |
+| E UI base | `feat/ui-base` | 13-15 | In review (awaiting push and PR) |
+| F Dynamic pages | `feat/ui-pages` | 16 | Next |
 | G E2E | `test/e2e` | 17 | Pending |
 | H Docker, CI and docs | `chore/delivery` | 18-20 | Pending |
 
