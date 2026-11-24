@@ -3523,6 +3523,8 @@ git commit -m "chore: add multi-stage Dockerfile with healthcheck"
 
 ### Task 19: CI pipeline
 
+> **Anticipated:** the `check` job (the first job below) was moved up and delivered on its own branch `ci/check-pipeline` right after slice C, so every later slice runs under CI. This task now only adds the `e2e` job (together with Task 17) and the `docker` job (together with Task 18) to the existing workflow.
+
 **Files:**
 - Create: `.github/workflows/ci.yml`
 

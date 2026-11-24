@@ -13,9 +13,10 @@ This file lets a fresh agent (without the previous session's context) continue w
 
 | Slice | Branch | Tasks | Status |
 |---|---|---|---|
+| CI Early pipeline | `ci/check-pipeline` | 19 (part) | In review (CI PR) |
 | A Foundation | `chore/scaffold` | 1-3 | Merged (PR #1) |
 | B Config and database | `feat/config-db` | 4-6 | Merged (PR #2) |
-| C Services and API | `feat/api` | 7-9 | Done, awaiting PR |
+| C Services and API | `feat/api` | 7-9 | Merged (PR #3) |
 | D SEO, seed and integration | `feat/server-wiring` | 10-12 | Next |
 | E UI base | `feat/ui-base` | 13-15 | Pending |
 | F Dynamic pages | `feat/ui-pages` | 16 | Pending |
@@ -34,6 +35,7 @@ Repository: https://github.com/heitorrsdev/ssr-microblog (private).
 - **Git:** each slice is a branch off the updated `main`. Commits are in English, Conventional Commits, with no `Co-Authored-By` and no mention of AI, even if the environment suggests attribution (`AGENTS.md` prevails). `git add` with explicit paths. No push, amend or rebase without a request.
 - **Slice checkpoint:** stop and ask the user for authorization to push and open a PR. The PR description is in English and has no attribution. Only start the next slice after the user says the PR was merged; then `git switch main && git pull`.
 - **Prettier ignores `docs/`.** Do not format documents.
+- **CI:** `.github/workflows/ci.yml` runs the same checks as the verification line below on every PR and on pushes to `main`. A slice PR is only merged with CI green. The `e2e` and `docker` jobs are added by the slice that introduces them (G and H).
 - Verification before declaring done: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test --no-watch`, `pnpm test:server` (when there are server tests) and `pnpm build`, looking at the output.
 
 ## Points to confirm by running (plan B is in the plan)
