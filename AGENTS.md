@@ -18,7 +18,7 @@ Stack: Node 24 LTS (`fnm`), pnpm (via `corepack`), Angular 22 + `@angular/ssr`, 
 ## Comments
 
 - **Avoid comments.** Write clear names and small functions instead.
-- Add a comment only when it is truly necessary: a non-obvious *why* (a workaround, a hidden constraint, a surprising behavior). Never describe *what* the code does.
+- Add a comment only when it is truly necessary: a non-obvious _why_ (a workaround, a hidden constraint, a surprising behavior). Never describe _what_ the code does.
 - No commented-out code, no TODOs without an issue.
 
 ## Code principles
