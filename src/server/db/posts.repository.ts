@@ -38,7 +38,9 @@ export function createPostsRepository(db: Db) {
     },
 
     count(filter: PostsFilter = {}): number {
-      return db.select({ total: count() }).from(posts).where(byUser(filter.userId)).get()?.total ?? 0;
+      return (
+        db.select({ total: count() }).from(posts).where(byUser(filter.userId)).get()?.total ?? 0
+      );
     },
 
     findById(id: number): PostRow | undefined {
