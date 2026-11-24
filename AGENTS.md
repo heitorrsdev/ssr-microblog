@@ -47,6 +47,7 @@ Stack: Node 24 LTS (`fnm`), pnpm (via `corepack`), Angular 22 + `@angular/ssr`, 
 - TDD in the service and API layers: failing test first, then the implementation.
 - Vitest for unit and integration tests. Playwright for E2E, including a check that the raw HTML contains the content without running JS.
 - Nothing is done until lint, typecheck, tests and build have run and you have seen the output.
+- CI (`.github/workflows/ci.yml`) runs format check, lint, typecheck, UI tests, server tests and build on every PR and on `main`. A PR is only merged with CI green. When you add a new check (E2E, Docker), add it to the workflow in the same PR.
 
 ## Git and commits
 
