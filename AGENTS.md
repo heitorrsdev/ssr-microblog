@@ -1,52 +1,62 @@
 # AGENTS.md
 
-Instruções para agentes de código (e pessoas) que trabalham neste repositório.
+Instructions for coding agents (and people) working in this repository.
 
-## Projeto
+## Project
 
-Microblog em **Angular 22 com SSR**, feito para estudar renderização no servidor com práticas de engenharia de produção. O design completo está em `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md`. Leia a spec antes de propor mudanças de arquitetura. Os planos de implementação ficam em `docs/superpowers/plans/`.
+Microblog built with **Angular 22 and SSR**, made to study server-side rendering with production-grade engineering practices. The full design is in `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md`. Read the spec before proposing architecture changes. Implementation plans live in `docs/superpowers/plans/`. To resume an interrupted execution, read `docs/superpowers/HANDOFF.md`.
 
 Stack: Node 24 LTS (`fnm`), pnpm (via `corepack`), Angular 22 + `@angular/ssr`, Express, SQLite (`better-sqlite3`) + Drizzle, Zod, `pino`, Vitest, Playwright.
 
-> Os comandos de build, teste e lint serão adicionados aqui quando o projeto for criado. Não invente comandos: confira o `package.json`.
+> Build, test and lint commands are added here when the project is set up. Do not invent commands: check `package.json`.
 
-## Princípios de código
+## Language
 
-- **SRP (responsabilidade única):** cada módulo, classe, função e componente tem um único motivo para mudar. Se você precisa usar "e" para descrever o que algo faz, divida.
-- **KISS:** escolha a solução mais simples que resolve o problema atual. Sem abstração, configuração ou camada "para o futuro" (YAGNI). Três linhas parecidas valem mais que uma abstração prematura.
-- Arquivos pequenos e focados. Um arquivo que cresce demais indica responsabilidades misturadas.
-- Nomes claros no lugar de comentários. Comente apenas o porquê não óbvio.
-- TypeScript estrito: sem `any` implícito e sem `// @ts-ignore` sem justificativa.
+- **Everything is written in English:** code, identifiers, test names, error messages, documentation, ADRs, PR titles and descriptions, and commit messages.
+- The only exception is user-facing UI copy, which stays in pt-BR because the product targets Portuguese speakers.
 
-## Arquitetura (fronteiras)
+## Comments
 
-- `src/app/` (UI Angular) nunca importa de `src/server/`, e `src/server/` nunca importa de `src/app/`. O que for comum vive em `src/shared/`.
-- No servidor, cada camada só conhece a de baixo: `api` → `services` → `db`. Regra de negócio fica em `services`, não em rotas nem em componentes.
-- `src/server/app.ts` exporta o Express sem chamar `listen`, para testar a API sem subir o Angular.
-- Entrada externa (HTTP, env) é validada com Zod na borda.
+- **Avoid comments.** Write clear names and small functions instead.
+- Add a comment only when it is truly necessary: a non-obvious *why* (a workaround, a hidden constraint, a surprising behavior). Never describe *what* the code does.
+- No commented-out code, no TODOs without an issue.
 
-## Regras de SSR
+## Code principles
 
-- Nunca use `window`, `document` ou `localStorage` direto. Proteja com `afterNextRender` ou `isPlatformBrowser`.
-- Erros devolvem o status HTTP correto (404 real, não página de erro com 200).
-- Defina o `Cache-Control` de cada rota deliberadamente. Conteúdo que depende de sessão usa `private, no-store` e `Vary: Cookie`.
-- Toda página pública define title, descrição, canonical e Open Graph pelo `SeoService`.
+- **SRP (single responsibility):** every module, class, function and component has exactly one reason to change. If you need "and" to describe what something does, split it.
+- **KISS:** pick the simplest solution that solves the current problem. No abstraction, configuration or layer "for the future" (YAGNI). Three similar lines beat a premature abstraction.
+- Small, focused files. A file that grows too large signals mixed responsibilities.
+- Strict TypeScript: no implicit `any` and no `// @ts-ignore` without justification.
 
-## Testes
+## Architecture (boundaries)
 
-- TDD nas camadas de serviço e API: teste falhando primeiro, depois a implementação.
-- Vitest para unidade e integração. Playwright para E2E, incluindo a verificação de que o HTML bruto contém o conteúdo sem executar JS.
-- Nada é considerado pronto sem rodar lint, typecheck, testes e build e ver a saída.
+- `src/app/` (Angular UI) never imports from `src/server/`, and `src/server/` never imports from `src/app/`. Anything shared lives in `src/shared/`.
+- On the server, each layer only knows the one below it: `api` → `services` → `db`. Business rules live in `services`, not in routes or components.
+- `src/server/app.ts` exports Express without calling `listen`, so the API can be tested without Angular.
+- External input (HTTP, env) is validated with Zod at the boundary.
 
-## Git e commits
+## SSR rules
 
-- **Nunca adicione coautoria nos commits.** Sem `Co-Authored-By`, sem menção a IA ou a ferramentas na mensagem, e o mesmo vale para descrições de PR. O autor é apenas a pessoa configurada no git.
-- Mensagens em português, no formato **Conventional Commits** (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `ci:`), com o assunto no imperativo e até ~72 caracteres.
-- Commits atômicos: uma mudança lógica por commit, com os testes dela.
-- Não faça `push`, `amend`, `rebase` nem `force-push` sem pedido explícito, e não escreva direto em `main`. Trabalhe em branches e abra PRs pequenos.
-- Não commite segredos, `.env` nem o banco SQLite local.
+- Never use `window`, `document` or `localStorage` directly. Guard with `afterNextRender` or `isPlatformBrowser`.
+- Errors return the correct HTTP status (a real 404, not an error page with 200).
+- Set each route's `Cache-Control` deliberately. Session-dependent content uses `private, no-store` and `Vary: Cookie`.
+- Every public page sets title, description, canonical and Open Graph through `SeoService`.
 
-## Decisões e documentação
+## Tests
 
-- Decisões relevantes de arquitetura entram como ADR curto em `docs/adr/` (contexto, decisão, consequências).
-- Mudanças que alteram a spec atualizam a spec no mesmo PR.
+- TDD in the service and API layers: failing test first, then the implementation.
+- Vitest for unit and integration tests. Playwright for E2E, including a check that the raw HTML contains the content without running JS.
+- Nothing is done until lint, typecheck, tests and build have run and you have seen the output.
+
+## Git and commits
+
+- **Never add co-authorship to commits.** No `Co-Authored-By`, no mention of AI or tooling in the message, and the same goes for PR descriptions. The author is only the person configured in git.
+- Commit messages in **English**, following **Conventional Commits** (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `ci:`), with an imperative subject of up to ~72 characters.
+- Atomic commits: one logical change per commit, with its tests.
+- Do not `push`, `amend`, `rebase` or `force-push` without an explicit request, and never write directly to `main`. Work in branches and open small PRs.
+- Do not commit secrets, `.env` or the local SQLite database.
+
+## Decisions and documentation
+
+- Relevant architecture decisions go in a short ADR in `docs/adr/` (context, decision, consequences).
+- Changes that alter the spec update the spec in the same PR.
