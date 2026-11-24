@@ -27,10 +27,9 @@ describe('createDb', () => {
 
   it('rejeita handle duplicado', () => {
     handle = createDb(':memory:', 'drizzle');
-    handle.db.insert(users).values({ handle: 'ana', displayName: 'Ana' }).run();
+    const { db } = handle;
+    db.insert(users).values({ handle: 'ana', displayName: 'Ana' }).run();
 
-    expect(() =>
-      handle.db.insert(users).values({ handle: 'ana', displayName: 'Outra' }).run(),
-    ).toThrow();
+    expect(() => db.insert(users).values({ handle: 'ana', displayName: 'Outra' }).run()).toThrow();
   });
 });
