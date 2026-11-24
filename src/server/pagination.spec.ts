@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { offsetOf, toPage } from './pagination';
 
 describe('offsetOf', () => {
-  it('calcula o deslocamento a partir de página e limite', () => {
+  it('computes the offset from page and limit', () => {
     expect(offsetOf({ page: 1, limit: 10 })).toBe(0);
     expect(offsetOf({ page: 3, limit: 10 })).toBe(20);
   });
 });
 
 describe('toPage', () => {
-  it('monta a página com o total de páginas arredondado para cima', () => {
+  it('builds the page with total pages rounded up', () => {
     expect(toPage(['a', 'b'], 5, { page: 1, limit: 2 })).toEqual({
       items: ['a', 'b'],
       page: 1,
@@ -19,7 +19,7 @@ describe('toPage', () => {
     });
   });
 
-  it('tem ao menos uma página mesmo sem itens', () => {
+  it('has at least one page even without items', () => {
     expect(toPage([], 0, { page: 1, limit: 10 }).totalPages).toBe(1);
   });
 });
