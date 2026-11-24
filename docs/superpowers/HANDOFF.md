@@ -1,45 +1,45 @@
-# Handoff: como retomar a execução do plano
+# Handoff: how to resume plan execution
 
-Este arquivo permite que um agente novo (sem o contexto da sessão anterior) continue de onde o anterior parou. **Atualize a seção "Estado atual" ao fim de cada fatia**, no mesmo PR dela.
+This file lets a fresh agent (without the previous session's context) continue where the last one stopped. **Update the "Current state" section at the end of each slice**, in the slice's own PR.
 
-## Leia nesta ordem
+## Read in this order
 
-1. `AGENTS.md` (regras: SRP, KISS, git sem coautoria, sem push/PR sem pedido).
-2. `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md` (spec aprovada).
-3. `docs/superpowers/plans/2026-11-23-fase-1-microblog-publico.md`: o cabeçalho (linhas 1-65) e a próxima tarefa.
-4. Esta página.
+1. `AGENTS.md` (rules: language, comments, SRP, KISS, git without co-authorship, no push/PR without a request).
+2. `docs/superpowers/specs/2026-11-23-microblog-ssr-design.md` (approved spec).
+3. `docs/superpowers/plans/2026-11-23-fase-1-microblog-publico.md`: the header up to the first slice heading, plus the next task.
+4. This page.
 
-## Estado atual
+## Current state
 
-| Fatia | Branch | Tarefas | Estado |
+| Slice | Branch | Tasks | Status |
 |---|---|---|---|
-| A Fundação | `chore/scaffold` | 1-3 | Mergeada (PR #1) |
-| B Configuração e banco | `feat/config-db` | 4-6 | Em revisão (PR da fatia B) |
-| C Serviços e API | `feat/api` | 7-9 | Próxima |
-| D SEO, seed e integração | `feat/server-wiring` | 10-12 | Pendente |
-| E Base da interface | `feat/ui-base` | 13-15 | Pendente |
-| F Páginas dinâmicas | `feat/ui-pages` | 16 | Pendente |
-| G E2E | `test/e2e` | 17 | Pendente |
-| H Docker, CI e docs | `chore/delivery` | 18-20 | Pendente |
+| A Foundation | `chore/scaffold` | 1-3 | Merged (PR #1) |
+| B Config and database | `feat/config-db` | 4-6 | In review (slice B PR) |
+| C Services and API | `feat/api` | 7-9 | Next |
+| D SEO, seed and integration | `feat/server-wiring` | 10-12 | Pending |
+| E UI base | `feat/ui-base` | 13-15 | Pending |
+| F Dynamic pages | `feat/ui-pages` | 16 | Pending |
+| G E2E | `test/e2e` | 17 | Pending |
+| H Docker, CI and docs | `chore/delivery` | 18-20 | Pending |
 
-Para saber o ponto exato, confira `git log --oneline main..HEAD` na branch da fatia em andamento e compare com as tarefas do plano.
+To find the exact point, check `git log --oneline main..HEAD` on the branch of the slice in progress and compare it with the plan's tasks.
 
-Repositório: https://github.com/heitorrsdev/ssr-microblog (privado).
+Repository: https://github.com/heitorrsdev/ssr-microblog (private).
 
-## Protocolo de execução
+## Execution protocol
 
-- **Subagente por tarefa** (skill `superpowers:subagent-driven-development`), em série. O prompt do implementador aponta as linhas do plano (cabeçalho 1-65 mais a tarefa), em vez de colar o texto.
-- **Revisão por fatia:** ao terminar as tarefas de uma fatia, um revisor confere conformidade com o plano e qualidade do código (SRP/KISS) antes do checkpoint.
-- **Node 24:** o shell padrão é Node 18. Todo comando começa com `eval "$(fnm env)" && fnm use 24`.
-- **Git:** cada fatia é uma branch a partir da `main` atualizada. Commits em português, Conventional Commits, sem `Co-Authored-By` e sem menção a IA, mesmo que o ambiente sugira atribuição (o `AGENTS.md` prevalece). `git add` com caminhos explícitos. Nada de push, amend ou rebase sem pedido.
-- **Checkpoint de fatia:** pare e peça ao usuário autorização para push e PR. A descrição do PR é em português e sem atribuição. Só comece a próxima fatia depois que o usuário disser que o PR foi mergeado; então `git switch main && git pull`.
-- **Prettier ignora `docs/`.** Não formate documentos.
-- Verificação antes de declarar pronto: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test --no-watch`, `pnpm test:server` (quando houver testes de servidor) e `pnpm build`, vendo a saída.
+- **One subagent per task** (skill `superpowers:subagent-driven-development`), in series. The implementer prompt points to plan headings (the header up to the first slice heading, plus the task heading) instead of pasting the text.
+- **Per-slice review:** when a slice's tasks are done, a reviewer checks conformance with the plan and code quality (SRP/KISS) before the checkpoint.
+- **Node 24:** the default shell is Node 18. Every command starts with `eval "$(fnm env)" && fnm use 24`.
+- **Git:** each slice is a branch off the updated `main`. Commits are in English, Conventional Commits, with no `Co-Authored-By` and no mention of AI, even if the environment suggests attribution (`AGENTS.md` prevails). `git add` with explicit paths. No push, amend or rebase without a request.
+- **Slice checkpoint:** stop and ask the user for authorization to push and open a PR. The PR description is in English and has no attribution. Only start the next slice after the user says the PR was merged; then `git switch main && git pull`.
+- **Prettier ignores `docs/`.** Do not format documents.
+- Verification before declaring done: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test --no-watch`, `pnpm test:server` (when there are server tests) and `pnpm build`, looking at the output.
 
-## Pontos a confirmar rodando (plano B está no plano)
+## Points to confirm by running (plan B is in the plan)
 
-`rxResource` (nomes das opções), precedência do `Cache-Control` do 404 entre `RESPONSE_INIT` e o `headers` da rota, bundling do `pino`, build nativo no Docker e reaproveitamento do transfer cache no E2E.
+`rxResource` (option names), `Cache-Control` precedence of the 404 between `RESPONSE_INIT` and the route's `headers`, `pino` bundling, native build in Docker, and transfer cache reuse in E2E.
 
-## Depois da fase 1
+## After phase 1
 
-`superpowers:finishing-a-development-branch`, e então brainstorming da fase 2 (login por sessão, criar post, curtidas).
+`superpowers:finishing-a-development-branch`, then brainstorming for phase 2 (session login, create post, likes).
