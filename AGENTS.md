@@ -56,6 +56,11 @@ Stack: Node 24 LTS (`fnm`), pnpm (via `corepack`), Angular 22 + `@angular/ssr`, 
 - Do not `push`, `amend`, `rebase` or `force-push` without an explicit request, and never write directly to `main`. Work in branches and open small PRs.
 - Do not commit secrets, `.env` or the local SQLite database.
 
+## Migrations
+
+- Generate migrations with a descriptive snake_case name: `pnpm db:generate --name=<what_changes>` (for example `add_post_likes`). Never keep the random name drizzle-kit suggests.
+- Never edit or rename a migration that has already been merged to `main`.
+
 ## Decisions and documentation
 
 - Relevant architecture decisions go in a short ADR in `docs/adr/` (context, decision, consequences).
