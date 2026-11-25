@@ -1,7 +1,7 @@
 import { Component, effect, inject, input } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { excerpt } from '../../core/text';
 import { SeoService } from '../../core/seo.service';
+import { excerpt } from '../../core/text';
 import { Pagination } from '../../shared-ui/pagination';
 import { PostCard } from '../../shared-ui/post-card';
 import type { ProfileData } from './profile.resolver';

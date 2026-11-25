@@ -14,7 +14,7 @@ export interface ProfileData {
 export const profileResolver: ResolveFn<ProfileData | null> = (route) => {
   const api = inject(ApiService);
   const notFound = orNotFound<ProfileData>();
-  const handle = route.paramMap.get('handle') ?? '';
+  const handle = String(route.params['handle']);
 
   return forkJoin({
     user: api.getUser(handle),
