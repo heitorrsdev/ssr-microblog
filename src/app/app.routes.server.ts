@@ -6,6 +6,27 @@ export const serverRoutes: ServerRoute[] = [
   { path: '', renderMode: RenderMode.Prerender, headers: STATIC_CACHE },
   { path: 'sobre', renderMode: RenderMode.Prerender, headers: STATIC_CACHE },
   {
+    path: 'feed',
+    renderMode: RenderMode.Server,
+    headers: { 'Cache-Control': 'public, max-age=30, stale-while-revalidate=60' },
+  },
+  {
+    path: 'u/:handle',
+    renderMode: RenderMode.Server,
+    headers: { 'Cache-Control': 'public, max-age=60' },
+  },
+  {
+    path: 'p/:id',
+    renderMode: RenderMode.Server,
+    headers: { 'Cache-Control': 'public, max-age=60' },
+  },
+  {
+    path: 'erro',
+    renderMode: RenderMode.Server,
+    status: 500,
+    headers: { 'Cache-Control': 'no-store' },
+  },
+  {
     path: '**',
     renderMode: RenderMode.Server,
     status: 404,
