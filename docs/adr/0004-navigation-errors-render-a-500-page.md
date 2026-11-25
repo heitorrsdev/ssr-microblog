@@ -1,4 +1,4 @@
-# 0001. Navigation errors render a 500 page
+# 0004. Navigation errors render a 500 page
 
 ## Context
 

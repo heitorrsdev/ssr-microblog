@@ -3414,7 +3414,7 @@ test.describe('browser', () => {
 Run: `pnpm test:e2e`
 Expected: `11 passed`.
 
-If the "reuses the server data" test fails with API calls, investigate `HttpTransferCache` (cache key vs. absolute URL on the server and relative on the client) before anything else: it is the core point of the SSR study. Record the cause and the solution in a short ADR (`docs/adr/0004-...`).
+If the "reuses the server data" test fails with API calls, investigate `HttpTransferCache` (cache key vs. absolute URL on the server and relative on the client) before anything else: it is the core point of the SSR study. Record the cause and the solution in a short ADR (`docs/adr/0005-...`).
 
 - [ ] **Step 5: Commit**
 
