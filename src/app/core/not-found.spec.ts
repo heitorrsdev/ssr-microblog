@@ -15,13 +15,14 @@ describe('orNotFound', () => {
   });
 
   it('converts 404 and 400 to null and marks the response as status 404 with no cache', async () => {
-    const init: ResponseInit = {};
+    const init: ResponseInit = { headers: new Headers({ 'Content-Type': 'text/html' }) };
     TestBed.configureTestingModule({ providers: [{ provide: RESPONSE_INIT, useValue: init }] });
 
     expect(await run(throwError(() => new HttpErrorResponse({ status: 404 })))).toBeNull();
     expect(await run(throwError(() => new HttpErrorResponse({ status: 400 })))).toBeNull();
     expect(init.status).toBe(404);
     expect(new Headers(init.headers).get('Cache-Control')).toBe('no-store');
+    expect(new Headers(init.headers).get('Content-Type')).toBe('text/html');
   });
 
   it('works in the browser, where RESPONSE_INIT is null', async () => {

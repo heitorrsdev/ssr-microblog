@@ -10,7 +10,9 @@ export function orNotFound<T>(): OperatorFunction<T, T | null> {
     if (error instanceof HttpErrorResponse && (error.status === 404 || error.status === 400)) {
       if (responseInit) {
         responseInit.status = 404;
-        responseInit.headers = { 'Cache-Control': 'no-store' };
+        const headers = new Headers(responseInit.headers);
+        headers.set('Cache-Control', 'no-store');
+        responseInit.headers = headers;
       }
       return of(null);
     }
