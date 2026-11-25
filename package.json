@@ -14,7 +14,7 @@
     "test:server": "vitest run --config vitest.server.config.ts",
     "db:generate": "drizzle-kit generate",
     "db:seed": "tsx src/server/db/seed.run.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.spec.json",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.spec.json && tsc --noEmit -p tsconfig.e2e.json",
     "serve:ssr:ssr-microblog": "node dist/ssr-microblog/server/server.mjs"
   },
   "private": true,
