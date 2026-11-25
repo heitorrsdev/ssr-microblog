@@ -1,4 +1,5 @@
 import { Routes } from '@angular/router';
+import { ErrorPage } from './features/error/error.page';
 import { feedResolver } from './features/feed/feed.resolver';
 import { postResolver } from './features/post/post.resolver';
 import { profileResolver } from './features/profile/profile.resolver';
@@ -32,7 +33,7 @@ export const routes: Routes = [
   },
   {
     path: 'erro',
-    loadComponent: () => import('./features/error/error.page').then((m) => m.ErrorPage),
+    component: ErrorPage,
   },
   {
     path: '**',

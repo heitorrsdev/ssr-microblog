@@ -7,7 +7,7 @@ describe('handleNavigationError', () => {
   const cause = new Error('api down');
   const handleError = vi.fn();
 
-  function run(init: ResponseInit | null) {
+  function run(init: ResponseInit | null, url = '/p/1') {
     TestBed.configureTestingModule({
       providers: [
         provideRouter([]),
@@ -15,7 +15,7 @@ describe('handleNavigationError', () => {
         { provide: ErrorHandler, useValue: { handleError } },
       ],
     });
-    const navigationError = new NavigationError(1, '/p/1', cause);
+    const navigationError = new NavigationError(1, url, cause);
     return TestBed.runInInjectionContext(() => handleNavigationError(navigationError));
   }
 
@@ -26,8 +26,12 @@ describe('handleNavigationError', () => {
 
     expect(handleError).toHaveBeenCalledWith(cause);
     expect(result).toBeInstanceOf(RedirectCommand);
-    expect(TestBed.inject(Router).serializeUrl(result.redirectTo as never)).toBe('/erro');
-    expect(result.navigationBehaviorOptions).toEqual({ skipLocationChange: true });
+    expect(
+      TestBed.inject(Router).serializeUrl((result as RedirectCommand).redirectTo as never),
+    ).toBe('/erro');
+    expect((result as RedirectCommand).navigationBehaviorOptions).toEqual({
+      skipLocationChange: true,
+    });
   });
 
   it('marks the response as 500 with no cache, keeping the existing headers', () => {
@@ -42,5 +46,10 @@ describe('handleNavigationError', () => {
 
   it('works in the browser, where RESPONSE_INIT is null', () => {
     expect(run(null)).toBeInstanceOf(RedirectCommand);
+  });
+
+  it('does not redirect again when the error page itself fails to load', () => {
+    expect(run({}, '/erro')).toBeUndefined();
+    expect(handleError).toHaveBeenCalledWith(cause);
   });
 });
