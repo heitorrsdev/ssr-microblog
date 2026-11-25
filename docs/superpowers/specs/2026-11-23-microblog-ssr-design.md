@@ -14,7 +14,7 @@ A study project on **server-side rendering (SSR)** with a meta-framework, built 
 | Per-request SSR | Feed, profile and post |
 | Server-side data fetching + `TransferState` | All dynamic pages |
 | SEO | Title, meta, canonical, Open Graph, `sitemap.xml`, `robots.txt` |
-| Incremental hydration (`@defer`) | Likes and comments |
+| Incremental hydration (`@defer`) | "More posts by the author" (phase 1); likes (phase 2) |
 | HTTP cache | `Cache-Control` per route |
 | Errors with the correct status | Real 404 and 500 |
 | SSR with user state (phase 2) | Cookie session, `Vary`, `no-store` |
@@ -82,7 +82,7 @@ Components fetch data with `HttpClient` against `/api`, using the same code on t
 In phase 2, session-dependent routes use `private, no-store` with `Vary: Cookie`.
 
 - **SEO:** a `SeoService` sets title, description, canonical and Open Graph per route. `sitemap.xml` and `robots.txt` are generated on the server from the database.
-- **Incremental hydration:** likes and comments in `@defer` blocks with `hydrate on viewport`.
+- **Incremental hydration:** in phase 1, the "More posts by the author" block on the post page uses `@defer (on viewport; hydrate on viewport)`. Likes come in phase 2.
 - **Errors:** 404 and 500 with the correct HTTP status. The server logs the error and does not expose details to the client.
 - **Browser-only code:** `window`/`localStorage` guarded by `afterNextRender` or `isPlatformBrowser`.
 
