@@ -12,9 +12,12 @@ No code change. Both behaviors were checked in a real Chromium against the produ
 - `/p/48`: the post itself comes from the transfer cache (no request). The deferred block hydrates only when it enters the viewport. With a 150px viewport (block 305px below the top) there were no requests before scrolling and exactly one `GET /api/users/caio/posts?page=1` after scrolling. With a viewport that already shows the block, that request happens right after load.
 - That request is a real refetch: `AuthorPosts` uses `rxResource`, and the transfer cache is already off by the time the block hydrates lazily.
 - DOM: the four server-rendered cards are preserved. Every card element kept its identity (tagged before scrolling) and a `MutationObserver` saw additions only during HTML parsing and no removals afterwards, so there is no flicker.
+- Why: the pending `rxResource` keeps the app unstable through `PendingTasks`, and incremental hydration waits for `whenStable` before cleaning up the dehydrated views, so the server DOM is claimed when the value arrives.
 
 ## Consequences
 
-- The refetch is accepted: it is one cheap request, only for users who reach the block, and the API response is cacheable.
+- The refetch is accepted: it is one cheap request, only for users who reach the block, and the response can be revalidated through its weak ETag (the endpoint sets no `Cache-Control`).
 - Moving the deferred block's data into the route resolver would remove the request but would also remove the point of deferring it; revisit only if the block grows costly.
 - The E2E suite guards the main guarantee (no API calls during `/feed` hydration). The `/p/:id` refetch behavior is documented here, not asserted.
+- Switching `AuthorPosts` away from `rxResource` (or anything that registers `PendingTasks`) could bring the flicker back.
+- If the refetch fails, the server-rendered section is removed.
