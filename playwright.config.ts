@@ -10,7 +10,7 @@ export default defineConfig({
   forbidOnly: isCI,
   retries: isCI ? 1 : 0,
   reporter: isCI ? 'github' : 'list',
-  use: { baseURL: `http://localhost:${PORT}` },
+  use: { baseURL: `http://localhost:${PORT}`, trace: 'on-first-retry' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
     command:
@@ -22,7 +22,6 @@ export default defineConfig({
       SITE_URL: `http://localhost:${PORT}`,
       DATABASE_PATH: 'data/e2e.db',
       LOG_LEVEL: 'silent',
-      NG_ALLOWED_HOSTS: 'localhost,127.0.0.1',
     },
   },
 });

@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 // The seed creates 48 posts; the newest is #48 (id 48) and its author is "caio".
 
 test.describe('server-rendered HTML (without running JavaScript)', () => {
-  test('feed has posts, SEO and cache in the raw HTML', async ({ request }) => {
+  test('feed has posts, SEO and cache in the raw HTML', async ({ request, baseURL }) => {
     const res = await request.get('/feed');
     const html = await res.text();
 
@@ -12,16 +12,17 @@ test.describe('server-rendered HTML (without running JavaScript)', () => {
     expect(html).toContain('(#48)');
     expect(html).toContain('<title>Feed · Microblog</title>');
     expect(html).toContain('property="og:title"');
-    expect(html).toContain('rel="canonical" href="http://localhost:4300/feed"');
+    expect(html).toContain(`rel="canonical" href="${baseURL}/feed"`);
   });
 
   test('post has article Open Graph, canonical and the deferred block already rendered', async ({
     request,
+    baseURL,
   }) => {
     const html = await (await request.get('/p/48')).text();
 
     expect(html).toContain('property="og:type" content="article"');
-    expect(html).toContain('rel="canonical" href="http://localhost:4300/p/48"');
+    expect(html).toContain(`rel="canonical" href="${baseURL}/p/48"`);
     expect(html).toContain('Mais posts de @caio');
   });
 
@@ -58,13 +59,13 @@ test.describe('server-rendered HTML (without running JavaScript)', () => {
     }
   });
 
-  test('sitemap lists posts and robots points to the sitemap', async ({ request }) => {
+  test('sitemap lists posts and robots points to the sitemap', async ({ request, baseURL }) => {
     const sitemap = await (await request.get('/sitemap.xml')).text();
     const robots = await (await request.get('/robots.txt')).text();
 
-    expect(sitemap).toContain('<loc>http://localhost:4300/p/48</loc>');
-    expect(sitemap).toContain('<loc>http://localhost:4300/u/caio</loc>');
-    expect(robots).toContain('Sitemap: http://localhost:4300/sitemap.xml');
+    expect(sitemap).toContain(`<loc>${baseURL}/p/48</loc>`);
+    expect(sitemap).toContain(`<loc>${baseURL}/u/caio</loc>`);
+    expect(robots).toContain(`Sitemap: ${baseURL}/sitemap.xml`);
   });
 
   test('API responds with JSON in the standard error format', async ({ request }) => {
@@ -91,6 +92,7 @@ test.describe('browser', () => {
 
     await page.goto('/feed');
     await page.waitForLoadState('networkidle');
+    await expect(page.locator('[ngh]')).toHaveCount(0);
 
     expect(errors).toEqual([]);
     expect(apiCalls).toEqual([]);
