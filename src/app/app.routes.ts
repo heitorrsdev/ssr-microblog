@@ -31,6 +31,10 @@ export const routes: Routes = [
     resolve: { post: postResolver },
   },
   {
+    path: 'erro',
+    loadComponent: () => import('./features/error/error.page').then((m) => m.ErrorPage),
+  },
+  {
     path: '**',
     loadComponent: () => import('./features/not-found/not-found.page').then((m) => m.NotFoundPage),
   },

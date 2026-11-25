@@ -21,6 +21,12 @@ export const serverRoutes: ServerRoute[] = [
     headers: { 'Cache-Control': 'public, max-age=60' },
   },
   {
+    path: 'erro',
+    renderMode: RenderMode.Server,
+    status: 500,
+    headers: { 'Cache-Control': 'no-store' },
+  },
+  {
     path: '**',
     renderMode: RenderMode.Server,
     status: 404,

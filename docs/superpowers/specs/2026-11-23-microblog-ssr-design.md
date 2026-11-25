@@ -77,13 +77,14 @@ Components fetch data with `HttpClient` against `/api`, using the same code on t
 | `/feed` | SSR | `public, max-age=30, stale-while-revalidate` | Pagination via `?page=` |
 | `/u/:handle` | SSR | `public, max-age=60` | Profile meta tags |
 | `/p/:id` | SSR | `public, max-age=60` | Open Graph with the post text; real 404 if it does not exist |
+| `/erro` | SSR | `no-store` | Error page with status 500; also the target of failed navigations |
 | `**` | SSR | `no-store` | 404 page with status 404 |
 
 In phase 2, session-dependent routes use `private, no-store` with `Vary: Cookie`.
 
 - **SEO:** a `SeoService` sets title, description, canonical and Open Graph per route. `sitemap.xml` and `robots.txt` are generated on the server from the database.
 - **Incremental hydration:** in phase 1, the "More posts by the author" block on the post page uses `@defer (on viewport; hydrate on viewport)`. Likes come in phase 2.
-- **Errors:** 404 and 500 with the correct HTTP status. The server logs the error and does not expose details to the client.
+- **Errors:** 404 and 500 with the correct HTTP status. A resolver failure other than 404 is handled by a router navigation error handler that logs the error, sets status 500 with `no-store`, and renders the error page without changing the URL (ADR 0001). The server logs the error and does not expose details to the client.
 - **Browser-only code:** `window`/`localStorage` guarded by `afterNextRender` or `isPlatformBrowser`.
 
 ## 6. Data and API (phase 1)
