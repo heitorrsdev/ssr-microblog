@@ -18,9 +18,9 @@ This file lets a fresh agent (without the previous session's context) continue w
 | B Config and database | `feat/config-db` | 4-6 | Merged (PR #2) |
 | C Services and API | `feat/api` | 7-9 | Merged (PR #3) |
 | D SEO, seed and integration | `feat/server-wiring` | 10-12 | Merged (PR #6) |
-| E UI base | `feat/ui-base` | 13-15 | In review (awaiting push and PR) |
-| F Dynamic pages | `feat/ui-pages` | 16 | Next |
-| G E2E | `test/e2e` | 17 | Pending |
+| E UI base | `feat/ui-base` | 13-15 | Merged (PR #7) |
+| F Dynamic pages | `feat/ui-pages` | 16 | In review (awaiting push and PR) |
+| G E2E | `test/e2e` | 17 | Next |
 | H Docker, CI and docs | `chore/delivery` | 18-20 | Pending |
 
 To find the exact point, check `git log --oneline main..HEAD` on the branch of the slice in progress and compare it with the plan's tasks.
@@ -45,3 +45,10 @@ Repository: https://github.com/heitorrsdev/ssr-microblog (private).
 ## After phase 1
 
 `superpowers:finishing-a-development-branch`, then brainstorming for phase 2 (session login, create post, likes).
+
+## Notes for slice G (from slice F review)
+
+- Check whether the `@defer (hydrate on viewport)` "more posts" block refetches after hydration (HTTP and resource transfer caches turn off at `whenStable`) and flickers. Record the finding in ADR 0005 together with the transfer cache check.
+- Navigation errors render `/erro` with status 500 (ADR 0004). If the API recovers between the server render and hydration, the client may render a different page over the error page's DOM. This is transient and only worth noting.
+- Error logs from the Angular side go to the console through `ErrorHandler`, not to `pino`.
+- Deferred minor items: `AuthorPosts` fetches its own data but sits in `shared-ui`; out-of-range `?page=` returns 200 with an indexable canonical.
