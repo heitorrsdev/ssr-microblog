@@ -7,14 +7,16 @@ import { PostCard } from './post-card';
   selector: 'app-author-posts',
   imports: [PostCard],
   template: `
-    <section aria-labelledby="more-title">
-      <h2 id="more-title">Mais posts de &#64;{{ handle() }}</h2>
-      @for (post of others(); track post.id) {
-        <app-post-card [post]="post" />
-      } @empty {
-        <p>Sem outros posts deste autor.</p>
-      }
-    </section>
+    @if (others(); as list) {
+      <section aria-labelledby="more-title">
+        <h2 id="more-title">Mais posts de &#64;{{ handle() }}</h2>
+        @for (post of list; track post.id) {
+          <app-post-card [post]="post" />
+        } @empty {
+          <p>Sem outros posts deste autor.</p>
+        }
+      </section>
+    }
   `,
 })
 export class AuthorPosts {
@@ -28,6 +30,11 @@ export class AuthorPosts {
   });
 
   protected readonly others = computed(() =>
-    (this.page.value()?.items ?? []).filter((post) => post.id !== this.exceptId()).slice(0, 4),
+    this.page.hasValue()
+      ? this.page
+          .value()
+          .items.filter((post) => post.id !== this.exceptId())
+          .slice(0, 4)
+      : null,
   );
 }
