@@ -10,7 +10,7 @@ Stack: Node 24 LTS (`fnm`), pnpm (via `corepack`), Angular 22 + `@angular/ssr`, 
 
 Commands (always with Node 24 active, `fnm use`):
 
-- `pnpm install`, `pnpm start` (dev), `pnpm build`, `pnpm db:seed`, `pnpm db:generate`
+- `pnpm bootstrap` (install, `.env`, seed), `pnpm start` (dev), `pnpm start:prod`, `pnpm build`, `pnpm db:seed`, `pnpm db:generate`
 - `pnpm lint`, `pnpm format:check`, `pnpm typecheck`
 - `pnpm test --no-watch` (UI), `pnpm test:server` (server), `pnpm test:e2e` (build + Playwright)
 
