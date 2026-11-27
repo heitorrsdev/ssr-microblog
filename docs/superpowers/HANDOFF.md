@@ -20,8 +20,8 @@ This file lets a fresh agent (without the previous session's context) continue w
 | D SEO, seed and integration | `feat/server-wiring` | 10-12 | Merged (PR #6) |
 | E UI base | `feat/ui-base` | 13-15 | Merged (PR #7) |
 | F Dynamic pages | `feat/ui-pages` | 16 | Merged (PR #8) |
-| G E2E | `test/e2e` | 17 | In review (awaiting push and PR) |
-| H Docker, CI and docs | `chore/delivery` | 18-20 | Next |
+| G E2E | `test/e2e` | 17 | Merged (PR #9) |
+| H Docker, CI and docs | `chore/delivery` | 18-20 | In review (awaiting push and PR) |
 
 To find the exact point, check `git log --oneline main..HEAD` on the branch of the slice in progress and compare it with the plan's tasks.
 
@@ -45,6 +45,11 @@ Repository: https://github.com/heitorrsdev/ssr-microblog (private).
 ## After phase 1
 
 `superpowers:finishing-a-development-branch`, then brainstorming for phase 2 (session login, create post, likes).
+
+## Notes from slice H
+
+- Running the image with a remapped port (`-p 4400:4000`) returned 500 on `/feed`: Angular resolves server-side `/api` calls against the request's `Host`. Fixed with a server-only `LoopbackBackend` (see ADR 0003).
+- After the merge: ask whether to try enabling `main` branch protection with `gh api`, then close phase 1 (`superpowers:finishing-a-development-branch`) and start phase 2 brainstorming.
 
 ## Notes for slice H (from slices F and G)
 
