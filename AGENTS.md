@@ -8,7 +8,11 @@ Microblog built with **Angular 22 and SSR**, made to study server-side rendering
 
 Stack: Node 24 LTS (`fnm`), pnpm (via `corepack`), Angular 22 + `@angular/ssr`, Express, SQLite (`better-sqlite3`) + Drizzle, Zod, `pino`, Vitest, Playwright.
 
-> Build, test and lint commands are added here when the project is set up. Do not invent commands: check `package.json`.
+Commands (always with Node 24 active, `fnm use`):
+
+- `pnpm install`, `pnpm start` (dev), `pnpm build`, `pnpm db:seed`, `pnpm db:generate`
+- `pnpm lint`, `pnpm format:check`, `pnpm typecheck`
+- `pnpm test --no-watch` (UI), `pnpm test:server` (server), `pnpm test:e2e` (build + Playwright)
 
 ## Language
 

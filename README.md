@@ -1,59 +1,56 @@
-# SsrMicroblog
+# Microblog SSR
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 22.3.0.
+Microblog built with **Angular 22 and server-side rendering (SSR)**, to study SSR with production-grade engineering practices. Full design in [`docs/superpowers/specs`](docs/superpowers/specs/2026-11-23-microblog-ssr-design.md).
 
-## Development server
+## What it demonstrates
 
-To start a local development server, run:
+- Prerender (SSG) on `/` and `/sobre`; per-request SSR on `/feed`, `/u/:handle` and `/p/:id`.
+- Server-side SEO: title, meta, Open Graph, canonical, `sitemap.xml` and `robots.txt`.
+- HTTP cache per route, real 404s and incremental hydration (`@defer`).
+- Express API with SQLite/Drizzle, unit, integration and E2E tests.
 
-```bash
-ng serve
-```
+## Requirements
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+- [fnm](https://github.com/Schniz/fnm) (Node 24, defined in `.node-version`) and `corepack` (pnpm).
 
-## Code scaffolding
-
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
-
-```bash
-ng generate component component-name
-```
-
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+## How to run
 
 ```bash
-ng generate --help
+fnm use                 # Node 24
+corepack enable pnpm
+pnpm install
+pnpm db:seed            # creates data/microblog.db with sample data
+pnpm start              # dev server at http://localhost:4200
 ```
 
-## Building
-
-To build the project run:
+Production build:
 
 ```bash
-ng build
+pnpm build
+NG_ALLOWED_HOSTS=localhost,127.0.0.1 node dist/ssr-microblog/server/server.mjs
 ```
 
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
+Environment variables are in [`.env.example`](.env.example). In production, set `SITE_URL` and include the public domain in `NG_ALLOWED_HOSTS`.
 
-## Running unit tests
-
-To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
+## Docker
 
 ```bash
-ng test
+docker build -t ssr-microblog .
+docker run -p 4000:4000 -v microblog-data:/data ssr-microblog
 ```
 
-## Running end-to-end tests
+## Quality
 
-For end-to-end (e2e) testing, run:
+| Command                           | What it does                      |
+| --------------------------------- | --------------------------------- |
+| `pnpm lint` / `pnpm format:check` | ESLint and Prettier               |
+| `pnpm typecheck`                  | TypeScript without emitting       |
+| `pnpm test --no-watch`            | UI tests (Vitest via Angular)     |
+| `pnpm test:server`                | Server tests (Vitest on Node)     |
+| `pnpm test:e2e`                   | Build + E2E tests with Playwright |
 
-```bash
-ng e2e
-```
+## Documentation
 
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
-
-## Additional Resources
-
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+- Architecture decisions: [`docs/adr`](docs/adr)
+- Implementation plans: [`docs/superpowers/plans`](docs/superpowers/plans)
+- Rules for contributors (humans and agents): [`AGENTS.md`](AGENTS.md)
