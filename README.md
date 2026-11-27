@@ -15,19 +15,19 @@ Microblog built with **Angular 22 and server-side rendering (SSR)**, to study SS
 
 ## How to run
 
+Enable automatic Node version switching once (in `~/.zshrc` or `~/.bashrc`), so entering the folder activates Node 24 from `.node-version`:
+
 ```bash
-fnm use                 # Node 24
-corepack enable pnpm
-pnpm install
-pnpm db:seed            # creates data/microblog.db with sample data
-pnpm start              # dev server at http://localhost:4200
+eval "$(fnm env --use-on-cd)"
 ```
 
-Production build:
+Then:
 
 ```bash
-pnpm build
-NG_ALLOWED_HOSTS=localhost,127.0.0.1 node dist/ssr-microblog/server/server.mjs
+corepack enable pnpm    # first time only
+pnpm bootstrap          # install, create .env from .env.example, seed data/microblog.db
+pnpm start              # dev server at http://localhost:4200
+pnpm start:prod         # production build at http://localhost:4000, reads .env
 ```
 
 Environment variables are in [`.env.example`](.env.example). In production, set `SITE_URL` and include the public domain in `NG_ALLOWED_HOSTS`.
