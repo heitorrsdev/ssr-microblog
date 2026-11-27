@@ -18,6 +18,9 @@ const config = loadConfig();
 const logger = createLogger(config.LOG_LEVEL);
 const { db } = createDb(config.DATABASE_PATH, config.MIGRATIONS_DIR);
 
+const listensItself = isMainModule(import.meta.url) || Boolean(process.env['pm_id']);
+const loopbackOrigin = listensItself ? `http://127.0.0.1:${config.PORT}` : undefined;
+
 const app = createApp({ config, db, logger });
 const angularApp = new AngularNodeAppEngine();
 
@@ -31,14 +34,14 @@ app.use(
 
 app.use((req, res, next) => {
   angularApp
-    .handle(req, { siteUrl: config.SITE_URL })
+    .handle(req, { siteUrl: config.SITE_URL, loopbackOrigin })
     .then((response) => (response ? writeResponseToNodeResponse(response, res) : next()))
     .catch(next);
 });
 
 app.use(createRenderErrorHandler(logger));
 
-if (isMainModule(import.meta.url) || process.env['pm_id']) {
+if (listensItself) {
   app.listen(config.PORT, (error) => {
     if (error) {
       throw error;

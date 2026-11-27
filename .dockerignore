@@ -1,0 +1,11 @@
+node_modules
+dist
+.angular
+.git
+data
+test-results
+playwright-report
+docs
+e2e
+.github
+*.md
